@@ -7,6 +7,7 @@ import { LevelEditor } from './components/LevelEditor';
 import { EmbedDrawer } from './components/EmbedDrawer';
 import { VictoryModal } from './components/VictoryModal';
 import { LeaderboardModal } from './components/LeaderboardModal';
+import { NavigationBar } from './components/NavigationBar';
 import { LEVELS } from './game/levels';
 import { THEMES } from './game/themes';
 import { sounds } from './audio/soundManager';
@@ -19,17 +20,33 @@ import { Swords, X as CloseIcon } from 'lucide-react';
 
 const STORAGE_KEY = 'hardcore_pixel_platformer_v1';
 const LIFETIME_DEATHS_KEY = 'hardcore_pixel_platformer_lifetime_deaths';
-const CUSTOM_LEVELS_STORAGE_KEY = 'hardcore_pixel_platformer_custom_levels_v2';
+const CUSTOM_LEVELS_STORAGE_KEY = 'hardcore_pixel_platformer_custom_levels_v3_18x18';
 const PLAYER_NAME_KEY = 'pixel_platformer_player_name';
+const CREATOR_MODE_KEY = 'hardcore_platformer_creator_mode';
 
 function loadStoredLevels(): LevelData[] {
   try {
     if (typeof window === 'undefined') return LEVELS;
+    
+    // Check if user has custom created levels
     const stored = localStorage.getItem(CUSTOM_LEVELS_STORAGE_KEY);
-    if (!stored) return LEVELS;
+    if (!stored) {
+      // Save current 18x18 levels
+      try {
+        localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(LEVELS));
+      } catch {}
+      return LEVELS;
+    }
+
     const parsed: LevelData[] = JSON.parse(stored);
     if (!Array.isArray(parsed) || parsed.length === 0) return LEVELS;
-    return parsed;
+
+    // Filter only genuine custom user levels (id > 15)
+    const customOnly = parsed.filter((lvl) => lvl.id > 15);
+    
+    // Always guarantee the official 15 campaign levels are fresh 18x18 maps
+    const merged = [...LEVELS, ...customOnly];
+    return merged;
   } catch {
     return LEVELS;
   }
@@ -58,7 +75,26 @@ export default function App() {
     }
   }, []);
 
-  // Parse URL query parameters for embedded mode & Telegram challenges
+  // Creator Mode State (Allows admin to edit campaign levels 1-15)
+  const [isCreatorMode, setIsCreatorMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem(CREATOR_MODE_KEY) === 'true';
+      } catch {}
+    }
+    return false;
+  });
+
+  const handleToggleCreatorMode = useCallback((enabled: boolean) => {
+    setIsCreatorMode(enabled);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(CREATOR_MODE_KEY, enabled ? 'true' : 'false');
+      } catch {}
+    }
+  }, []);
+
+  // Parse URL query parameters
   const urlParams = useMemo(() => {
     if (typeof window === 'undefined') return new URLSearchParams();
     return new URLSearchParams(window.location.search);
@@ -103,7 +139,6 @@ export default function App() {
   const [bgmVolume, setBgmVolume] = useState<number>(0.3);
   const [isBgmPlaying, setIsBgmPlaying] = useState<boolean>(false);
 
-  // Apply initial audio settings
   useEffect(() => {
     sounds.setMuted(isMuted);
     sounds.setSfxVolume(sfxVolume);
@@ -138,12 +173,12 @@ export default function App() {
     return {};
   });
 
-  // Modals
+  // Modal Views State
   const [showLevelSelect, setShowLevelSelect] = useState<boolean>(false);
-  const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [showEmbedDrawer, setShowEmbedDrawer] = useState<boolean>(false);
   const [showEditor, setShowEditor] = useState<boolean>(false);
+  const [showEmbedDrawer, setShowEmbedDrawer] = useState<boolean>(false);
+  const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
   const [victoryData, setVictoryData] = useState<{
     level: LevelData;
     time: number;
@@ -152,7 +187,39 @@ export default function App() {
     rank?: number;
   } | null>(null);
 
-  // Initial batch sync of records with online leaderboard server
+  // Active Screen Calculation for bottom nav
+  const activeNavScreen = useMemo<'game' | 'levels' | 'leaderboard' | 'editor' | 'settings'>(() => {
+    if (showEditor) return 'editor';
+    if (showLeaderboard) return 'leaderboard';
+    if (showLevelSelect) return 'levels';
+    if (showSettings) return 'settings';
+    return 'game';
+  }, [showEditor, showLeaderboard, showLevelSelect, showSettings]);
+
+  const handleBottomNav = (screen: 'game' | 'levels' | 'leaderboard' | 'editor' | 'settings') => {
+    setShowLevelSelect(false);
+    setShowLeaderboard(false);
+    setShowEditor(false);
+    setShowSettings(false);
+    setShowEmbedDrawer(false);
+
+    if (screen === 'levels') setShowLevelSelect(true);
+    else if (screen === 'leaderboard') setShowLeaderboard(true);
+    else if (screen === 'editor') setShowEditor(true);
+    else if (screen === 'settings') setShowSettings(true);
+  };
+
+  // Sync lifetime stats and level records to storage
+  const saveRecords = (newRecords: Record<number, LevelRecord>) => {
+    setRecords(newRecords);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(newRecords));
+      } catch {}
+    }
+  };
+
+  // Sync batch records online
   useEffect(() => {
     if (Object.keys(records).length > 0) {
       batchSyncRecords(
@@ -160,254 +227,201 @@ export default function App() {
         records,
         tgUser.username,
         tgUser.id,
-        tgUser.isTelegram ? 'telegram' : 'web'
-      );
+        tgUser.id ? 'telegram' : 'web'
+      ).catch(() => {});
     }
-  }, []);
+  }, [records, tgUser, playerName]);
 
-  // Save records to LocalStorage and Submit to Online Leaderboard
-  const saveRecord = useCallback((levelId: number, time: number, deaths: number) => {
-    setRecords((prev) => {
-      const existing = prev[levelId];
-      const isFaster = !existing || time < existing.bestTime;
-      const updated: LevelRecord = {
-        completed: true,
-        bestTime: isFaster ? time : existing.bestTime,
-        deaths: existing ? Math.min(existing.deaths, deaths) : deaths,
-        stars: 3,
-      };
-      const next = { ...prev, [levelId]: updated };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-
-    // Send score to server online leaderboard
-    submitScoreToLeaderboard({
-      levelId,
-      time,
-      deaths,
-      playerName,
-      username: tgUser.username,
-      tgId: tgUser.id,
-      platform: tgUser.isTelegram ? 'telegram' : 'web',
-    }).then((res) => {
-      if (res.rank) {
-        setVictoryData((curr) => curr ? { ...curr, rank: res.rank } : null);
-      }
-    });
-  }, [playerName, tgUser]);
-
-  // HUD Update from game loop
+  // Handlers
   const handleUpdateHUD = useCallback((player: GameEngineState['player'], time: number, deaths: number) => {
     setHudPlayer(player);
     setHudTime(time);
     setHudDeaths(deaths);
   }, []);
 
-  // Level Complete Event
-  const handleLevelComplete = useCallback((levelId: number, time: number, deaths: number) => {
-    haptics.success();
-    saveRecord(levelId, time, deaths);
-    const isLast = currentLevelIndex >= levels.length - 1;
-    setVictoryData({
-      level: currentLevel,
-      time,
-      deaths,
-      isAllCompleted: isLast,
-    });
-  }, [currentLevel, currentLevelIndex, levels.length, saveRecord]);
-
-  // Player Death Event (Increment Level & Lifetime Deaths)
-  const handlePlayerDeath = useCallback((_levelId: number, currentLevelDeaths: number) => {
-    haptics.heavy();
-    setHudDeaths(currentLevelDeaths);
-    setHudTime(0);
-    if (currentLevelDeaths > 0) {
-      setLifetimeDeaths((prev) => {
-        const next = prev + 1;
+  const handlePlayerDeath = useCallback((levelId: number, currentDeaths: number) => {
+    setLifetimeDeaths((prev) => {
+      const next = prev + 1;
+      if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(LIFETIME_DEATHS_KEY, String(next));
+          localStorage.setItem(LIFETIME_DEATHS_KEY, next.toString());
         } catch {}
-        return next;
+      }
+      return next;
+    });
+
+    setRecords((prev) => {
+      const existing = prev[levelId] || { completed: false, bestTime: 999999, deaths: 0 };
+      const updated = {
+        ...prev,
+        [levelId]: {
+          ...existing,
+          deaths: (existing.deaths || 0) + 1,
+        },
+      };
+      saveRecords(updated);
+      return updated;
+    });
+  }, []);
+
+  const handleLevelComplete = useCallback(async (levelId: number, time: number, currentDeaths: number) => {
+    sounds.playWin();
+
+    // Check if new record
+    const existing = records[levelId];
+    const isNewBest = !existing || !existing.completed || time < existing.bestTime;
+    const bestTime = isNewBest ? time : existing.bestTime;
+
+    const updatedRecords = {
+      ...records,
+      [levelId]: {
+        completed: true,
+        bestTime,
+        deaths: (existing?.deaths || 0) + currentDeaths,
+      },
+    };
+    saveRecords(updatedRecords);
+
+    // Check if all levels completed
+    const allCompleted = levels.every((lvl) => updatedRecords[lvl.id]?.completed);
+
+    // Online submission
+    let rank: number | undefined;
+    try {
+      const resp = await submitScoreToLeaderboard({
+        levelId,
+        time,
+        deaths: currentDeaths,
+        tgId: tgUser.id,
+        username: tgUser.username,
+        playerName,
       });
-    }
-  }, []);
+      if (resp.success && resp.rank) {
+        rank = resp.rank;
+      }
+    } catch {}
 
-  // Next Level Handler
-  const handleNextLevel = useCallback(() => {
+    const completedLvl = levels.find((l) => l.id === levelId) || currentLevel;
+    setVictoryData({
+      level: completedLvl,
+      time,
+      deaths: currentDeaths,
+      isAllCompleted: allCompleted,
+      rank,
+    });
+  }, [records, levels, currentLevel, tgUser, playerName]);
+
+  const handleNextLevel = () => {
     setVictoryData(null);
-    setHudTime(0);
     if (currentLevelIndex < levels.length - 1) {
-      setCurrentLevelIndex((prev) => prev + 1);
+      setCurrentLevelIndex(currentLevelIndex + 1);
+    } else {
+      setShowLevelSelect(true);
     }
-  }, [currentLevelIndex, levels.length]);
+  };
 
-  // Restart Handler (triggers instant canvas reset)
-  const handleRestart = useCallback(() => {
-    setVictoryData(null);
-    setHudTime(0);
-    setIsPaused(false);
-    setRestartSignal((prev) => prev + 1);
-  }, []);
-
-  // Level Select Handler
   const handleSelectLevel = useCallback((lvl: LevelData) => {
     const idx = levels.findIndex((l) => l.id === lvl.id);
     if (idx !== -1) {
       setCurrentLevelIndex(idx);
     } else {
-      // Custom level added from editor
       setLevels((prev) => [...prev, lvl]);
       setCurrentLevelIndex(levels.length);
     }
-    setVictoryData(null);
     setHudTime(0);
+    setHudDeaths(0);
     setIsPaused(false);
   }, [levels]);
 
-  // Save level to memory & localStorage (works for both base levels and custom levels)
-  const handleSaveLevel = useCallback((lvl: LevelData, asNew: boolean = false) => {
-    setLevels((prev) => {
-      let updated: LevelData[];
-      if (asNew) {
-        updated = [...prev, lvl];
-      } else {
-        const existingIdx = prev.findIndex((l) => l.id === lvl.id);
-        if (existingIdx !== -1) {
-          updated = [...prev];
-          updated[existingIdx] = lvl;
-        } else {
-          updated = [...prev, lvl];
-        }
-      }
-
-      try {
-        localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(updated));
-      } catch (err) {
-        console.error('Failed to save level:', err);
-      }
-      return updated;
-    });
-
-    if (lvl.id === currentLevel.id) {
-      setRestartSignal((prev) => prev + 1);
-    }
-  }, [currentLevel.id]);
-
-  // Reset a base level to its original default layout
-  const handleResetLevel = useCallback((levelId: number) => {
-    const defaultLevel = LEVELS.find((l) => l.id === levelId);
-    if (!defaultLevel) return;
-
-    setLevels((prev) => {
-      const updated = prev.map((l) => (l.id === levelId ? JSON.parse(JSON.stringify(defaultLevel)) : l));
-      try {
-        localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(updated));
-      } catch {}
-      return updated;
-    });
-
-    if (currentLevel.id === levelId) {
-      setRestartSignal((prev) => prev + 1);
-    }
-  }, [currentLevel.id]);
-
-  // Delete a level (custom level or any level from playlist)
-  const handleDeleteLevel = useCallback((levelId: number) => {
-    setLevels((prev) => {
-      if (prev.length <= 1) {
-        return prev;
-      }
-      const updated = prev.filter((l) => l.id !== levelId);
-      try {
-        localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(updated));
-      } catch (err) {
-        console.error('Failed to save levels after deletion:', err);
-      }
-      return updated;
-    });
-
-    // Clean up records for deleted level
-    setRecords((prev) => {
-      const next = { ...prev };
-      delete next[levelId];
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
-
-    // Adjust active level index
-    setCurrentLevelIndex((prevIdx) => {
-      const remainingLevels = levels.filter((l) => l.id !== levelId);
-      const remainingLength = Math.max(1, remainingLevels.length);
-      return Math.min(prevIdx, remainingLength - 1);
-    });
-
+  const handleRestart = useCallback(() => {
     setRestartSignal((prev) => prev + 1);
-  }, [levels]);
-
-  // Audio Toggles
-  const handleToggleMute = useCallback(() => {
-    setIsMuted((prev) => {
-      const next = !prev;
-      sounds.setMuted(next);
-      return next;
-    });
   }, []);
 
-  const handleToggleBgm = useCallback(() => {
-    const isPlaying = sounds.toggleBgm();
-    setIsBgmPlaying(isPlaying);
-  }, []);
+  const handleToggleMute = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    sounds.setMuted(nextMuted);
+  };
 
-  const handleSfxVolume = useCallback((vol: number) => {
+  const handleToggleBgm = () => {
+    if (isBgmPlaying) {
+      sounds.stopBgm();
+      setIsBgmPlaying(false);
+    } else {
+      sounds.startBgm();
+      setIsBgmPlaying(true);
+    }
+  };
+
+  const handleSfxVolume = (vol: number) => {
     setSfxVolume(vol);
     sounds.setSfxVolume(vol);
-  }, []);
+  };
 
-  const handleBgmVolume = useCallback((vol: number) => {
+  const handleBgmVolume = (vol: number) => {
     setBgmVolume(vol);
     sounds.setBgmVolume(vol);
-  }, []);
+  };
 
-  const handleResetProgress = useCallback(() => {
+  const handleResetProgress = () => {
     setRecords({});
     setLifetimeDeaths(0);
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem(LIFETIME_DEATHS_KEY);
-    } catch {}
-  }, []);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(LIFETIME_DEATHS_KEY);
+      } catch {}
+    }
+    sounds.playDeath();
+  };
 
-  // Parent window postMessage command listener
-  useEffect(() => {
-    const handlePostMessage = (event: MessageEvent) => {
-      const data = event.data;
-      if (!data) return;
-
-      if (data.type === 'LOAD_LEVEL' && typeof data.levelId === 'number') {
-        const target = levels.find((l) => l.id === data.levelId);
-        if (target) handleSelectLevel(target);
-      } else if (data.type === 'RESTART') {
-        handleRestart();
-      } else if (data.type === 'PAUSE') {
-        setIsPaused(true);
-      } else if (data.type === 'RESUME') {
-        setIsPaused(false);
-      } else if (data.type === 'SET_THEME' && data.theme && THEMES[data.theme as ThemeName]) {
-        setThemeName(data.theme as ThemeName);
-      } else if (data.type === 'SET_MUTED' && typeof data.muted === 'boolean') {
-        setIsMuted(data.muted);
-        sounds.setMuted(data.muted);
+  // Custom Level Management (Save/Reset/Delete)
+  const handleSaveLevel = (savedLevel: LevelData, asNew?: boolean) => {
+    let nextLevels: LevelData[];
+    if (asNew) {
+      nextLevels = [...levels, savedLevel];
+    } else {
+      const idx = levels.findIndex((l) => l.id === savedLevel.id);
+      if (idx !== -1) {
+        nextLevels = [...levels];
+        nextLevels[idx] = savedLevel;
+      } else {
+        nextLevels = [...levels, savedLevel];
       }
-    };
+    }
+    setLevels(nextLevels);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(nextLevels));
+      } catch {}
+    }
+  };
 
-    window.addEventListener('message', handlePostMessage);
-    return () => window.removeEventListener('message', handlePostMessage);
-  }, [levels, handleSelectLevel, handleRestart]);
+  const handleResetLevel = (levelId: number) => {
+    const defaultLevel = LEVELS.find((l) => l.id === levelId);
+    if (defaultLevel) {
+      const nextLevels = levels.map((l) => (l.id === levelId ? defaultLevel : l));
+      setLevels(nextLevels);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(nextLevels));
+        } catch {}
+      }
+    }
+  };
+
+  const handleDeleteLevel = (levelId: number) => {
+    const nextLevels = levels.filter((l) => l.id !== levelId);
+    setLevels(nextLevels);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(nextLevels));
+      } catch {}
+    }
+    if (currentLevel.id === levelId) {
+      setCurrentLevelIndex(0);
+    }
+  };
 
   // Speedrun stats calculation
   const totalSpeedrunTime = (Object.values(records) as LevelRecord[]).reduce((acc, r) => acc + (r?.bestTime || 0), 0);
@@ -428,7 +442,7 @@ export default function App() {
       id="app-root-container"
       className="w-full h-[100dvh] flex flex-col justify-between bg-zinc-950 text-zinc-100 overflow-hidden font-mono select-none"
     >
-      {/* Friend Challenge Notice Banner (if opened via Telegram challenge link) */}
+      {/* Friend Challenge Notice Banner */}
       {challengeBanner && (
         <div className="bg-gradient-to-r from-sky-950 via-sky-900 to-indigo-950 border-b border-sky-600/50 px-3 py-1.5 flex items-center justify-between text-xs text-sky-200 z-30 shadow-md">
           <div className="flex items-center gap-2">
@@ -459,6 +473,7 @@ export default function App() {
         isMuted={isMuted}
         isBgmPlaying={isBgmPlaying}
         compact={isCompact}
+        isCreatorMode={isCreatorMode}
         onRestart={handleRestart}
         onTogglePause={() => setIsPaused((prev) => !prev)}
         onToggleMute={handleToggleMute}
@@ -470,7 +485,7 @@ export default function App() {
         onOpenEditor={() => setShowEditor(true)}
       />
 
-      {/* Main Canvas Viewport with stable mount key */}
+      {/* Main Game Canvas Viewport */}
       <GameCanvas
         key={`game-canvas-${currentLevel.id}`}
         level={currentLevel}
@@ -485,15 +500,24 @@ export default function App() {
         onPlayerDeath={handlePlayerDeath}
       />
 
-      {/* Modals & Drawers */}
+      {/* Bottom Navigation Bar */}
+      <NavigationBar
+        activeScreen={activeNavScreen}
+        onNavigate={handleBottomNav}
+        isCreatorMode={isCreatorMode}
+      />
+
+      {/* Modals */}
       {showLevelSelect && (
         <LevelSelectModal
           levels={levels}
           currentLevelId={currentLevel.id}
           records={records}
+          isCreatorMode={isCreatorMode}
           onSelectLevel={handleSelectLevel}
           onDeleteLevel={handleDeleteLevel}
           onOpenEditor={() => setShowEditor(true)}
+          onOpenLeaderboard={() => setShowLeaderboard(true)}
           onClose={() => setShowLevelSelect(false)}
         />
       )}
@@ -537,6 +561,8 @@ export default function App() {
           levels={levels}
           initialLevel={currentLevel}
           theme={currentTheme}
+          isCreatorMode={isCreatorMode}
+          onToggleCreatorMode={handleToggleCreatorMode}
           onSaveLevel={handleSaveLevel}
           onResetLevel={handleResetLevel}
           onDeleteLevel={handleDeleteLevel}

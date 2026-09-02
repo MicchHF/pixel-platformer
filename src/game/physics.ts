@@ -448,9 +448,9 @@ export function updatePhysics(
       p.vy = approach(p.vy, PHYSICS.MAX_FALL_SPEED, PHYSICS.GRAVITY * fixedDt);
     }
 
-    // Variable jump height: release jump button cuts upward velocity
-    if (!keys.jump && p.vy < 0) {
-      p.vy *= PHYSICS.JUMP_RELEASE_CUT;
+    // Variable jump height: releasing jump key cuts upward velocity cleanly once
+    if (prevKeys.jump && !keys.jump && p.vy < -80) {
+      p.vy = Math.max(p.vy, PHYSICS.JUMP_FORCE * PHYSICS.JUMP_RELEASE_CUT);
     }
 
     // 7. Jump Handling (Ground Jump / Coyote Jump / Air Jump from Crystal)

@@ -9,6 +9,7 @@ import { GameEngineState, initLevelState, respawnPlayer, updatePhysics } from '.
 import { renderGame } from '../game/renderer';
 import { sounds } from '../audio/soundManager';
 import { TouchControls } from './TouchControls';
+import { haptics } from '../utils/telegram';
 
 interface GameCanvasProps {
   level: LevelData;
@@ -78,6 +79,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     respawnPlayer(state);
     onUpdateHUD(state.player, 0, deathsCountRef.current);
     sounds.playDeath();
+    haptics.medium();
   }, [onPlayerDeath, onUpdateHUD]);
 
   // Re-initialize state when level changes
@@ -126,7 +128,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
       if (e.code === 'ArrowUp' || e.code === 'KeyW') keys.up = false;
       if (e.code === 'ArrowDown' || e.code === 'KeyS') keys.down = false;
-      if (e.code === 'Space' || e.code === 'KeyZ') keys.jump = false;
+      if (e.code === 'Space' || e.code === 'KeyZ' || e.code === 'ArrowUp' || e.code === 'KeyW') keys.jump = false;
       if (e.code === 'KeyX' || e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyK') keys.dash = false;
       if (e.code === 'KeyR') keys.restart = false;
     };
@@ -186,6 +188,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             deathsCountRef.current += 1;
             onPlayerDeath(state.level.id, deathsCountRef.current);
             onUpdateHUD(state.player, state.levelTime, deathsCountRef.current);
+            haptics.error();
             // PostMessage to parent
             if (typeof window !== 'undefined' && window.parent) {
               window.parent.postMessage({
@@ -200,6 +203,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           () => {
             onLevelComplete(state.level.id, state.levelTime, deathsCountRef.current);
             onUpdateHUD(state.player, state.levelTime, deathsCountRef.current);
+            haptics.success();
             // PostMessage to parent
             if (typeof window !== 'undefined' && window.parent) {
               window.parent.postMessage({
@@ -214,7 +218,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         );
 
-        // Throttle HUD state update to ~20 FPS to prevent React render saturation while keeping smooth numbers
+        // Throttle HUD state update to ~20 FPS
         hudThrottleCounter++;
         if (hudThrottleCounter % 3 === 0) {
           onUpdateHUD(state.player, state.levelTime, deathsCountRef.current);
@@ -241,25 +245,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return () => cancelAnimationFrame(animFrameId);
   }, [theme, scanlines, screenShakeEnabled, onLevelComplete, onPlayerDeath, onUpdateHUD]);
 
+  const levelCols = level.cols || 18;
+  const levelRows = level.rows || 18;
+
   return (
     <div 
       ref={containerRef}
       id="game-viewport-container"
-      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-center overflow-hidden bg-zinc-950 p-1 sm:p-3 select-none"
+      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-between overflow-hidden bg-zinc-950 px-2 py-1 select-none"
     >
-      {/* Canvas Frame with responsive aspect-ratio containment */}
+      {/* Canvas Frame with dynamic level aspect-ratio containment */}
       <div 
         id="pixel-canvas-frame"
-        className="relative w-full max-w-[620px] aspect-[26/16] flex items-center justify-center shadow-2xl rounded-xl overflow-hidden border-2 border-zinc-800 bg-black shrink-0"
+        className="relative w-full max-w-[420px] max-h-[50vh] sm:max-h-[55vh] flex items-center justify-center shadow-2xl rounded-2xl overflow-hidden border-2 border-zinc-800 bg-black shrink my-auto"
         style={{
-          boxShadow: `0 0 25px ${theme.background}66, 0 10px 25px rgba(0,0,0,0.8)`,
+          aspectRatio: `${levelCols} / ${levelRows}`,
+          boxShadow: `0 0 30px ${theme.background}88, 0 12px 30px rgba(0,0,0,0.85)`,
         }}
       >
         <canvas
           ref={canvasRef}
           id="main-pixel-canvas"
-          width={level.cols * TILE_SIZE}
-          height={level.rows * TILE_SIZE}
+          width={levelCols * TILE_SIZE}
+          height={levelRows * TILE_SIZE}
           className="w-full h-full block object-contain"
           style={{ imageRendering: 'pixelated' }}
         />
@@ -268,15 +276,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         {isPaused && (
           <div className="absolute inset-0 bg-black/80 backdrop-blur-xs flex flex-col items-center justify-center font-mono text-zinc-100 animate-fadeIn z-20">
             <h3 className="text-2xl font-black tracking-widest text-cyan-400 mb-2">ПАУЗА</h3>
-            <p className="text-xs text-zinc-400">Нажмите кнопку ▶ Продолжить</p>
+            <p className="text-xs text-zinc-400">Нажмите ▶ Продолжить в меню</p>
           </div>
         )}
       </div>
 
       {/* Touch D-Pad / Ergonomic Controls for vertical mobile view */}
       {shouldShowTouch && (
-        <div className="w-full max-w-xl mt-auto pt-2 pb-safe">
-          <TouchControls onKeyChange={handleTouchKey} />
+        <div className="w-full max-w-xl shrink-0 pt-1 pb-safe">
+          <TouchControls 
+            onKeyChange={handleTouchKey} 
+            onQuickRestart={handleRestart}
+          />
         </div>
       )}
     </div>
