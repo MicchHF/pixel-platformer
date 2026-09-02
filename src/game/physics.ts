@@ -23,6 +23,7 @@ export interface GameEngineState {
   particles: Particle[];
   screenShake: number;
   levelTime: number;
+  timerStarted: boolean;
   isCompleted: boolean;
   spawnPoint: { x: number; y: number };
   goalPoint: { x: number; y: number };
@@ -142,6 +143,7 @@ export function initLevelState(rawLevel: LevelData): GameEngineState {
     particles: [],
     screenShake: 0,
     levelTime: 0,
+    timerStarted: false,
     isCompleted: false,
     spawnPoint: { x: spawnX, y: spawnY },
     goalPoint: { x: goalX, y: goalY },
@@ -149,6 +151,8 @@ export function initLevelState(rawLevel: LevelData): GameEngineState {
 }
 
 export function respawnPlayer(state: GameEngineState) {
+  state.levelTime = 0;
+  state.timerStarted = false;
   state.player.x = state.spawnPoint.x;
   state.player.y = state.spawnPoint.y;
   state.player.vx = 0;
@@ -208,9 +212,17 @@ export function updatePhysics(
   onDeath: () => void,
   onWin: () => void
 ): void {
+  // Start level timer on first player movement/action
+  const hasInput = keys.left || keys.right || keys.jump || keys.dash || keys.up || keys.down;
+  if (!state.timerStarted && hasInput) {
+    state.timerStarted = true;
+  }
+
   // Cap delta time to prevent physics tunneling during frame drops
   const fixedDt = Math.min(dt, 0.033);
-  state.levelTime += fixedDt;
+  if (state.timerStarted) {
+    state.levelTime += fixedDt;
+  }
 
   if (state.screenShake > 0) {
     state.screenShake = Math.max(0, state.screenShake - fixedDt * 20);

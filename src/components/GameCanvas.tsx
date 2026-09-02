@@ -71,19 +71,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const handleRestart = useCallback(() => {
     const state = gameStateRef.current;
     state.levelTime = 0;
+    state.timerStarted = false;
     state.isCompleted = false;
     deathsCountRef.current += 1;
     onPlayerDeath(state.level.id, deathsCountRef.current);
     respawnPlayer(state);
+    onUpdateHUD(state.player, 0, deathsCountRef.current);
     sounds.playDeath();
-  }, [onPlayerDeath]);
+  }, [onPlayerDeath, onUpdateHUD]);
 
   // Re-initialize state when level changes
   useEffect(() => {
     gameStateRef.current = initLevelState(level);
     deathsCountRef.current = 0;
     onPlayerDeath(level.id, 0);
-  }, [level, onPlayerDeath]);
+    onUpdateHUD(gameStateRef.current.player, 0, 0);
+  }, [level, onPlayerDeath, onUpdateHUD]);
 
   // External restart trigger listener
   const prevRestartSignalRef = useRef<number>(restartSignal);

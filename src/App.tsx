@@ -223,6 +223,7 @@ export default function App() {
   const handlePlayerDeath = useCallback((_levelId: number, currentLevelDeaths: number) => {
     haptics.heavy();
     setHudDeaths(currentLevelDeaths);
+    setHudTime(0);
     if (currentLevelDeaths > 0) {
       setLifetimeDeaths((prev) => {
         const next = prev + 1;
@@ -237,6 +238,7 @@ export default function App() {
   // Next Level Handler
   const handleNextLevel = useCallback(() => {
     setVictoryData(null);
+    setHudTime(0);
     if (currentLevelIndex < levels.length - 1) {
       setCurrentLevelIndex((prev) => prev + 1);
     }
@@ -245,6 +247,7 @@ export default function App() {
   // Restart Handler (triggers instant canvas reset)
   const handleRestart = useCallback(() => {
     setVictoryData(null);
+    setHudTime(0);
     setIsPaused(false);
     setRestartSignal((prev) => prev + 1);
   }, []);
@@ -260,6 +263,7 @@ export default function App() {
       setCurrentLevelIndex(levels.length);
     }
     setVictoryData(null);
+    setHudTime(0);
     setIsPaused(false);
   }, [levels]);
 
