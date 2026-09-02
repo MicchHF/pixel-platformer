@@ -252,10 +252,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     <div 
       ref={containerRef}
       id="game-viewport-container"
-      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-between overflow-hidden bg-zinc-950 px-0 sm:px-2 py-0 select-none"
+      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-center overflow-hidden bg-zinc-950 px-0 sm:px-2 py-0 select-none gap-0.5 sm:gap-1"
     >
       {/* Canvas Frame stretching edge-to-edge horizontally on mobile */}
-      <div className="flex-1 w-full min-h-0 flex items-center justify-center my-auto overflow-hidden">
+      <div className="flex-1 w-full min-h-0 flex items-center justify-center overflow-hidden">
         <div 
           id="pixel-canvas-frame"
           className="relative w-full max-w-full sm:max-w-[440px] flex items-center justify-center shadow-2xl overflow-hidden border-y sm:border border-zinc-800/80 sm:rounded-xl bg-black"
@@ -285,9 +285,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         </div>
       </div>
 
-      {/* Touch Controls for mobile view */}
+      {/* Touch Controls for mobile view - positioned snugly right beneath the game field */}
       {shouldShowTouch && (
-        <div className="w-full max-w-xl shrink-0 pt-1 pb-safe px-1">
+        <div className="w-full max-w-lg shrink-0 pt-0 pb-1 px-1">
           <TouchControls 
             onKeyChange={handleTouchKey} 
             onQuickRestart={handleRestart}

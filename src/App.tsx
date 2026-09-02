@@ -15,6 +15,7 @@ import { GameEngineState, initLevelState } from './game/physics';
 import { LevelData, LevelRecord, ThemeName } from './types/game';
 import { initTelegram, haptics, shareScoreToTelegram, TelegramUserData } from './utils/telegram';
 import { submitScoreToLeaderboard, batchSyncRecords } from './services/leaderboardApi';
+import { fetchServerBaseLevels } from './services/levelsApi';
 import { formatHundredths } from './utils/time';
 import { Swords, X as CloseIcon } from 'lucide-react';
 
@@ -144,6 +145,26 @@ export default function App() {
     sounds.setSfxVolume(sfxVolume);
     sounds.setBgmVolume(bgmVolume);
   }, [isMuted, sfxVolume, bgmVolume]);
+
+  // Synchronize server base levels across all players/devices
+  useEffect(() => {
+    fetchServerBaseLevels().then((serverLevels) => {
+      if (serverLevels && Array.isArray(serverLevels) && serverLevels.length > 0) {
+        setLevels((prev) => {
+          const customOnly = prev.filter((l) => l.id > 15);
+          const serverIds = new Set(serverLevels.map((l) => l.id));
+          const nonConflictingCustom = customOnly.filter((l) => !serverIds.has(l.id));
+          const updated = [...serverLevels, ...nonConflictingCustom];
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(updated));
+            } catch {}
+          }
+          return updated;
+        });
+      }
+    });
+  }, []);
 
   // In-Game Live HUD Tracking
   const [hudPlayer, setHudPlayer] = useState<GameEngineState['player']>(() => initLevelState(currentLevel).player);

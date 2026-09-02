@@ -349,6 +349,129 @@ app.post('/api/leaderboard/batch-sync', (req: Request, res: Response) => {
   }
 });
 
+// ================= BASE LEVELS PERSISTENCE (FOR ALL USERS) =================
+const BASE_LEVELS_FILE = path.join(process.cwd(), 'custom_base_levels.json');
+let baseLevelsStore: unknown[] | null = null;
+
+function loadBaseLevels(): unknown[] | null {
+  try {
+    if (fs.existsSync(BASE_LEVELS_FILE)) {
+      const raw = fs.readFileSync(BASE_LEVELS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        baseLevelsStore = parsed;
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error('Error loading custom base levels:', err);
+  }
+  return null;
+}
+
+function saveBaseLevels(levels: unknown[]) {
+  try {
+    fs.writeFileSync(BASE_LEVELS_FILE, JSON.stringify(levels, null, 2), 'utf-8');
+    baseLevelsStore = levels;
+    return true;
+  } catch (err) {
+    console.error('Error saving custom base levels:', err);
+    return false;
+  }
+}
+
+// Load on start
+loadBaseLevels();
+
+// GET /api/base-levels - Fetch server-wide base levels
+app.get('/api/base-levels', (_req: Request, res: Response) => {
+  try {
+    const levels = baseLevelsStore || loadBaseLevels();
+    res.json({
+      success: true,
+      levels: levels || null,
+      count: levels ? levels.length : 0,
+    });
+  } catch (err) {
+    console.error('Error in GET /api/base-levels:', err);
+    res.status(500).json({ error: 'Failed to read base levels' });
+  }
+});
+
+// POST /api/save-level-as-base - Save/replace a single level as base for everyone
+app.post('/api/save-level-as-base', (req: Request, res: Response) => {
+  try {
+    const { level } = req.body;
+    if (!level || typeof level !== 'object' || !level.id || !level.grid) {
+      res.status(400).json({ error: 'Invalid level payload' });
+      return;
+    }
+
+    let currentLevels: any[] = baseLevelsStore || loadBaseLevels() || [];
+
+    const existingIndex = currentLevels.findIndex((l: any) => l.id === level.id);
+    if (existingIndex !== -1) {
+      currentLevels[existingIndex] = level;
+    } else {
+      currentLevels.push(level);
+      currentLevels.sort((a: any, b: any) => (a.id || 0) - (b.id || 0));
+    }
+
+    const saved = saveBaseLevels(currentLevels);
+    if (saved) {
+      res.json({
+        success: true,
+        message: `Уровень «${level.name || level.id}» сохранен как базовый для всех игроков!`,
+        count: currentLevels.length,
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to write to base levels storage' });
+    }
+  } catch (err) {
+    console.error('Error saving single level as base:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/save-base-levels - Save/replace all levels on server
+app.post('/api/save-base-levels', (req: Request, res: Response) => {
+  try {
+    const { levels } = req.body;
+    if (!Array.isArray(levels) || levels.length === 0) {
+      res.status(400).json({ error: 'Expected non-empty array of levels' });
+      return;
+    }
+
+    const saved = saveBaseLevels(levels);
+    if (saved) {
+      res.json({
+        success: true,
+        message: `Все ${levels.length} уровней успешно сохранены на сервере для всех пользователей!`,
+        count: levels.length,
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to write base levels file' });
+    }
+  } catch (err) {
+    console.error('Error saving all base levels:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/reset-base-levels - Reset server base levels to default
+app.post('/api/reset-base-levels', (_req: Request, res: Response) => {
+  try {
+    if (fs.existsSync(BASE_LEVELS_FILE)) {
+      fs.unlinkSync(BASE_LEVELS_FILE);
+    }
+    baseLevelsStore = null;
+    res.json({ success: true, message: 'Базовые уровни сброшены к оригинальным' });
+  } catch (err) {
+    console.error('Error resetting base levels:', err);
+    res.status(500).json({ error: 'Failed to reset base levels' });
+  }
+});
+
 // ================= VITE MIDDLEWARE & STATIC =================
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

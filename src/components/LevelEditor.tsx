@@ -1,12 +1,14 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   X, Play, RotateCcw, Copy, Check, Upload, Trash2, 
   Square, Zap, Shield, Key, Eye, Disc, Plus, AlertTriangle,
-  Lock, Unlock, ShieldCheck, Crown, Edit3
+  Lock, Unlock, ShieldCheck, Crown, Edit3, Globe, Save,
+  FileCode, Sliders, Layers, Sparkles, HelpCircle
 } from 'lucide-react';
 import { LevelData, ThemeColors } from '../types/game';
 import { TILES, TILE_SIZE } from '../game/constants';
 import { haptics } from '../utils/telegram';
+import { saveLevelAsServerBase, saveAllLevelsAsServerBase } from '../services/levelsApi';
 
 const TOOL_SAW = 99;
 const ADMIN_PIN = '7777';
@@ -46,9 +48,13 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
   const [difficulty, setDifficulty] = useState<LevelData['difficulty']>(initialLevel?.difficulty || 'Extreme');
   const [parTime, setParTime] = useState<number>(initialLevel?.parTime || 6.0);
   const [hint, setHint] = useState<string>(initialLevel?.hint || '');
-  const [copied, setCopied] = useState<boolean>(false);
+  
+  const [copiedType, setCopiedType] = useState<'single' | 'all' | null>(null);
   const [savedNotification, setSavedNotification] = useState<string | null>(null);
   const [errorNotification, setErrorNotification] = useState<string | null>(null);
+  const [isServerSaving, setIsServerSaving] = useState<boolean>(false);
+
+  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [importJsonText, setImportJsonText] = useState<string>('');
   const [showImportModal, setShowImportModal] = useState<boolean>(false);
   const [showAdminPinModal, setShowAdminPinModal] = useState<boolean>(false);
@@ -382,7 +388,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     });
 
     // Draw Saws
-    saws.forEach((saw, idx) => {
+    saws.forEach((saw) => {
       ctx.save();
       ctx.setLineDash([4, 4]);
       ctx.strokeStyle = '#f43f5e';
@@ -465,6 +471,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     }
   };
 
+  // Mouse handlers
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     isMouseDownRef.current = true;
     if (selectedTool === TOOL_SAW) {
@@ -530,7 +537,43 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     }
   };
 
-  const constructLevelData = (forceNewId?: boolean): LevelData => {
+  // Touch drawing handlers
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    isMouseDownRef.current = true;
+    if (selectedTool === TOOL_SAW) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (touch.clientX - rect.left) * scaleX;
+      const y = (touch.clientY - rect.top) * scaleY;
+      setSawDrag({ startX: x, startY: y, currX: x, currY: y });
+    } else {
+      applyTileAtCoord(touch.clientX, touch.clientY);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const touch = e.touches[0];
+    if (!touch || !isMouseDownRef.current) return;
+    if (selectedTool === TOOL_SAW && sawDrag) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const x = (touch.clientX - rect.left) * scaleX;
+      const y = (touch.clientY - rect.top) * scaleY;
+      setSawDrag((prev) => prev ? { ...prev, currX: x, currY: y } : null);
+    } else {
+      applyTileAtCoord(touch.clientX, touch.clientY);
+    }
+  };
+
+  const constructLevelData = useCallback((forceNewId?: boolean): LevelData => {
     let targetId = activeLevelId;
     if (forceNewId || activeLevelId === 999 || (!isCreatorMode && isCampaignLevel)) {
       const maxId = Math.max(15, ...levels.map((l) => l.id));
@@ -548,10 +591,10 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
       saws: saws.length > 0 ? saws : undefined,
       lasers: lasers.length > 0 ? lasers : undefined,
     };
-  };
+  }, [activeLevelId, isCreatorMode, isCampaignLevel, levels, levelName, difficulty, parTime, levelCols, levelRows, hint, grid, saws, lasers]);
 
-  const handleSave = (asNew: boolean = false) => {
-    // If not creator mode and trying to save an official campaign level, save as new custom level!
+  // Save level locally
+  const handleSaveLocal = (asNew: boolean = false) => {
     const effectiveAsNew = asNew || (!isCreatorMode && isCampaignLevel);
     const data = constructLevelData(effectiveAsNew);
     onSaveLevel(data, effectiveAsNew);
@@ -559,6 +602,95 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     setSavedNotification(effectiveAsNew ? 'Создана новая пользовательская карта!' : 'Карта сохранена!');
     haptics.success();
     setTimeout(() => setSavedNotification(null), 2500);
+  };
+
+  // 1. SAVE AS BASE LEVEL FOR EVERYONE ON SERVER
+  const handleSaveAsServerBase = async () => {
+    setIsServerSaving(true);
+    try {
+      const data = constructLevelData(false);
+      // Save locally first
+      onSaveLevel(data, false);
+      
+      // Save to server
+      const res = await saveLevelAsServerBase(data);
+      if (res.success) {
+        setSavedNotification(`✅ Уровень «${data.name}» (ID: ${data.id}) сохранён как базовый для всех игроков!`);
+        haptics.success();
+      } else {
+        setErrorNotification(`Ошибка сохранения на сервере: ${res.message || 'Неизвестная ошибка'}`);
+        haptics.error();
+      }
+    } catch (err) {
+      setErrorNotification('Ошибка сети при сохранении уровня на сервер');
+      haptics.error();
+    } finally {
+      setIsServerSaving(false);
+      setTimeout(() => {
+        setSavedNotification(null);
+        setErrorNotification(null);
+      }, 3500);
+    }
+  };
+
+  // 2. SAVE ALL LEVELS TO SERVER
+  const handleSaveAllLevelsToServer = async () => {
+    setIsServerSaving(true);
+    try {
+      const currentUpdated = constructLevelData(false);
+      const allLevelsUpdated = levels.map((l) => l.id === currentUpdated.id ? currentUpdated : l);
+      if (!allLevelsUpdated.some((l) => l.id === currentUpdated.id)) {
+        allLevelsUpdated.push(currentUpdated);
+      }
+      
+      const res = await saveAllLevelsAsServerBase(allLevelsUpdated);
+      if (res.success) {
+        setSavedNotification(`🌐 Все ${allLevelsUpdated.length} уровней сохранены на сервере для всех пользователей!`);
+        haptics.success();
+      } else {
+        setErrorNotification(`Ошибка: ${res.message || 'Не удалось сохранить'}`);
+        haptics.error();
+      }
+    } catch {
+      setErrorNotification('Сетевая ошибка при синхронизации уровней');
+      haptics.error();
+    } finally {
+      setIsServerSaving(false);
+      setTimeout(() => {
+        setSavedNotification(null);
+        setErrorNotification(null);
+      }, 3500);
+    }
+  };
+
+  // 3. COPY THIS SINGLE LEVEL JSON
+  const handleCopySingleJson = () => {
+    const data = constructLevelData(false);
+    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+    setCopiedType('single');
+    setSavedNotification('📄 JSON текущего уровня скопирован!');
+    haptics.success();
+    setTimeout(() => {
+      setCopiedType(null);
+      setSavedNotification(null);
+    }, 2200);
+  };
+
+  // 4. COPY ALL LEVELS AS JSON ARRAY
+  const handleCopyAllLevelsJson = () => {
+    const currentUpdated = constructLevelData(false);
+    const all = levels.map((l) => l.id === currentUpdated.id ? currentUpdated : l);
+    if (!all.some((l) => l.id === currentUpdated.id)) {
+      all.push(currentUpdated);
+    }
+    navigator.clipboard.writeText(JSON.stringify(all, null, 2));
+    setCopiedType('all');
+    setSavedNotification(`📋 Все ${all.length} уровней скопированы в буфер обмена (JSON)!`);
+    haptics.success();
+    setTimeout(() => {
+      setCopiedType(null);
+      setSavedNotification(null);
+    }, 2500);
   };
 
   const handleResetToDefault = () => {
@@ -608,18 +740,23 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     });
   };
 
-  const handleCopyJson = () => {
-    const data = constructLevelData();
-    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-    setCopied(true);
-    haptics.success();
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   const handleImportJson = () => {
     try {
       const parsed = JSON.parse(importJsonText);
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].grid) {
+        // Multi-level array import
+        parsed.forEach((lvl: LevelData) => onSaveLevel(lvl, false));
+        handleSelectLevelToEdit(parsed[0].id);
+        setShowImportModal(false);
+        setImportJsonText('');
+        setSavedNotification(`Импортировано ${parsed.length} уровней!`);
+        haptics.success();
+        setTimeout(() => setSavedNotification(null), 2500);
+        return;
+      }
+
       if (parsed.grid && Array.isArray(parsed.grid)) {
+        // Single level import
         setGrid(parsed.grid);
         if (parsed.name) setLevelName(parsed.name);
         if (parsed.difficulty) setDifficulty(parsed.difficulty);
@@ -627,21 +764,55 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
         if (parsed.hint) setHint(parsed.hint);
         if (parsed.saws) setSaws(parsed.saws);
         if (parsed.lasers) setLasers(parsed.lasers);
+        if (parsed.cols) setLevelCols(parsed.cols);
+        if (parsed.rows) setLevelRows(parsed.rows);
         setShowImportModal(false);
         setImportJsonText('');
-        setSavedNotification('JSON успешно импортирован!');
+        setSavedNotification('JSON уровня успешно импортирован!');
         haptics.success();
         setTimeout(() => setSavedNotification(null), 2000);
       } else {
-        setErrorNotification('Неверный формат карты.');
+        setErrorNotification('Неверный формат JSON карты.');
         haptics.error();
         setTimeout(() => setErrorNotification(null), 3500);
       }
     } catch {
-      setErrorNotification('Ошибка парсинга JSON.');
+      setErrorNotification('Ошибка парсинга JSON: проверьте синтаксис.');
       haptics.error();
       setTimeout(() => setErrorNotification(null), 3500);
     }
+  };
+
+  // Helper to fill grid perimeter
+  const handleFillPerimeter = () => {
+    setGrid((prev) => {
+      const next = prev.map((r) => [...r]);
+      for (let r = 0; r < levelRows; r++) {
+        for (let c = 0; c < levelCols; c++) {
+          if (r === 0 || r === levelRows - 1 || c === 0 || c === levelCols - 1) {
+            next[r][c] = TILES.SMOOTH;
+          }
+        }
+      }
+      return next;
+    });
+    haptics.light();
+  };
+
+  // Clear inner canvas
+  const handleClearInner = () => {
+    setGrid((prev) => {
+      const next = prev.map((r) => [...r]);
+      for (let r = 1; r < levelRows - 1; r++) {
+        for (let c = 1; c < levelCols - 1; c++) {
+          next[r][c] = TILES.EMPTY;
+        }
+      }
+      return next;
+    });
+    setSaws([]);
+    setLasers([]);
+    haptics.light();
   };
 
   return (
@@ -649,18 +820,47 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
       id="level-editor-modal"
       className="fixed inset-0 z-50 flex flex-col bg-zinc-950 text-zinc-100 font-mono select-none overflow-hidden"
     >
-      {/* Notifications */}
+      {/* Toast Notifications */}
       {savedNotification && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
-          <Check className="w-4 h-4" />
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-4 border border-emerald-400">
+          <Check className="w-4 h-4 shrink-0" />
           <span>{savedNotification}</span>
         </div>
       )}
 
       {errorNotification && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
-          <AlertTriangle className="w-4 h-4" />
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-rose-600 text-white text-xs font-bold shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-4 border border-rose-400">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
           <span>{errorNotification}</span>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm p-6 rounded-2xl bg-zinc-900 border border-zinc-700 shadow-2xl text-center space-y-4">
+            <h3 className="text-base font-bold text-white">{confirmModal.title}</h3>
+            <p className="text-xs text-zinc-400">{confirmModal.message}</p>
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold transition hover:bg-zinc-700 cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={() => {
+                  confirmModal.onConfirm();
+                  setConfirmModal(null);
+                }}
+                className={`px-5 py-2 rounded-xl text-xs font-bold transition shadow-lg cursor-pointer ${
+                  confirmModal.isDanger ? 'bg-rose-600 hover:bg-rose-500 text-white' : 'bg-cyan-600 hover:bg-cyan-500 text-white'
+                }`}
+              >
+                {confirmModal.confirmText || 'Подтвердить'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -696,13 +896,13 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
                   setShowAdminPinModal(false);
                   setAdminError(null);
                 }}
-                className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold transition"
+                className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold transition hover:bg-zinc-700 cursor-pointer"
               >
                 Отмена
               </button>
               <button
                 onClick={handleVerifyAdminPin}
-                className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-black text-xs font-black transition shadow-lg"
+                className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-black text-xs font-black transition shadow-lg cursor-pointer"
               >
                 Разблокировать
               </button>
@@ -711,16 +911,165 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
         </div>
       )}
 
-      {/* Top Header */}
-      <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-zinc-900 border-b border-zinc-800 shrink-0">
-        <div className="flex items-center gap-2">
+      {/* JSON Import/Export Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg p-5 rounded-2xl bg-zinc-900 border border-zinc-700 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-sm font-bold text-white uppercase">Импорт / Экспорт JSON</h3>
+              </div>
+              <button 
+                onClick={() => setShowImportModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-zinc-400">
+              Вставьте JSON одного уровня или массив уровней для загрузки в игру:
+            </p>
+
+            <textarea
+              rows={8}
+              placeholder='{"id": 1, "name": "01: FIRST ASCENT", "grid": [...] }'
+              value={importJsonText}
+              onChange={(e) => setImportJsonText(e.target.value)}
+              className="w-full p-3 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500 custom-scrollbar"
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div className="flex gap-2">
+                <button
+                  onClick={handleCopySingleJson}
+                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Копировать этот</span>
+                </button>
+                <button
+                  onClick={handleCopyAllLevelsJson}
+                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Копировать ВСЕ</span>
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowImportModal(false)}
+                  className="px-3.5 py-1.5 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold hover:bg-zinc-700 cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  onClick={handleImportJson}
+                  className="px-4 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-md cursor-pointer flex items-center gap-1"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Применить JSON</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Level Settings Modal */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md p-5 rounded-2xl bg-zinc-900 border border-zinc-700 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-sm font-bold text-white uppercase">Параметры Уровня</h3>
+              </div>
+              <button 
+                onClick={() => setShowSettingsModal(false)}
+                className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-zinc-400 mb-1 font-semibold">Название уровня:</label>
+                <input
+                  type="text"
+                  value={levelName}
+                  onChange={(e) => setLevelName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-200 focus:outline-none focus:border-cyan-500 font-bold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-zinc-400 mb-1 font-semibold">Сложность:</label>
+                  <select
+                    value={difficulty}
+                    onChange={(e) => setDifficulty(e.target.value as LevelData['difficulty'])}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-200 focus:outline-none focus:border-cyan-500 font-bold"
+                  >
+                    <option value="Hard">Hard (Сложно)</option>
+                    <option value="Brutal">Brutal (Жесть)</option>
+                    <option value="Extreme">Extreme (Экстрим)</option>
+                    <option value="Nightmare">Nightmare (Кошмар)</option>
+                    <option value="Impossible">Impossible (Нереально)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-zinc-400 mb-1 font-semibold">Золотое время (сек):</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="1.0"
+                    max="60.0"
+                    value={parTime}
+                    onChange={(e) => setParTime(parseFloat(e.target.value) || 5.0)}
+                    className="w-full px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-200 focus:outline-none focus:border-cyan-500 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-zinc-400 mb-1 font-semibold">Подсказка в игре:</label>
+                <input
+                  type="text"
+                  placeholder="Например: Прыгай от стены и делай рывок вверх!"
+                  value={hint}
+                  onChange={(e) => setHint(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-zinc-950 border border-zinc-800 text-zinc-200 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition shadow-lg cursor-pointer"
+              >
+                Готово
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOP HEADER / ACTION BAR */}
+      <header className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-zinc-900 border-b border-zinc-800 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Level Dropdown */}
           <select
             value={activeLevelId}
             onChange={(e) => handleSelectLevelToEdit(parseInt(e.target.value, 10))}
-            className="px-3 py-1.5 rounded-xl bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs font-bold focus:outline-none focus:border-cyan-500"
+            className="px-3 py-1.5 rounded-xl bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs font-bold focus:outline-none focus:border-cyan-500 cursor-pointer"
           >
-            <optgroup label="🏆 Кампания">
+            <optgroup label="🏆 Кампания (1-15)">
               {levels.filter((l) => l.id <= 15).map((lvl) => (
                 <option key={lvl.id} value={lvl.id}>
                   {lvl.name} {isCreatorMode ? '✏️' : '🔒'}
@@ -739,21 +1088,21 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
             <option value={-1}>➕ Создать новый уровень...</option>
           </select>
 
-          {/* Campaign vs Creator Badge */}
+          {/* Admin Unlock Badge */}
           {isCampaignLevel ? (
             isCreatorMode ? (
               <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold">
                 <Crown className="w-3 h-3 text-amber-400" />
-                <span>РЕЖИМ СОЗДАТЕЛЯ (ADMIN)</span>
+                <span>ADMIN (СОЗДАТЕЛЬ)</span>
               </span>
             ) : (
               <button
                 onClick={() => setShowAdminPinModal(true)}
                 className="flex items-center gap-1 px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 text-[10px] font-semibold transition cursor-pointer"
-                title="Нажмите для ввода PIN разработчика"
+                title="Нажмите для ввода PIN разработчика (7777)"
               >
                 <Lock className="w-3 h-3 text-amber-400" />
-                <span>Официальный уровень (Только чтение)</span>
+                <span>Официальный уровень</span>
               </button>
             )
           ) : (
@@ -764,38 +1113,102 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
           )}
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-1.5">
+        {/* Action Buttons Group */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* PRIMARY BUTTON: SAVE THIS LEVEL AS BASE FOR EVERYONE */}
+          <button
+            id="btn-save-as-server-base"
+            onClick={handleSaveAsServerBase}
+            disabled={isServerSaving}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black transition shadow-lg border border-emerald-400/50 cursor-pointer active:scale-95 shrink-0"
+            title="Сохраняет эту карту на сервере как официальную базовую для всех игроков!"
+          >
+            <Globe className="w-3.5 h-3.5 text-emerald-200 animate-pulse" />
+            <span>{isServerSaving ? 'Сохранение...' : 'Сохранить как базовый для всех'}</span>
+          </button>
+
+          {/* SECONDARY: SAVE ALL LEVELS TO SERVER */}
+          <button
+            onClick={handleSaveAllLevelsToServer}
+            disabled={isServerSaving}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-teal-950/80 hover:bg-teal-900 border border-teal-600/80 text-teal-300 text-xs font-bold transition shadow-sm cursor-pointer active:scale-95"
+            title="Синхронизирует все уровни на сервер"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Все на сервер</span>
+          </button>
+
+          {/* COPY ALL LEVELS JSON */}
+          <button
+            onClick={handleCopyAllLevelsJson}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-indigo-300 text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Скопировать все уровни в формате JSON массива"
+          >
+            {copiedType === 'all' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>Скопировать все (JSON)</span>
+          </button>
+
+          {/* COPY SINGLE JSON */}
+          <button
+            onClick={handleCopySingleJson}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-cyan-300 text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Скопировать JSON этого уровня"
+          >
+            {copiedType === 'single' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <FileCode className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">JSON</span>
+          </button>
+
+          {/* IMPORT JSON MODAL */}
+          <button
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Импорт JSON"
+          >
+            <Upload className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Импорт</span>
+          </button>
+
+          {/* LEVEL SETTINGS */}
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Свойства карты"
+          >
+            <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden sm:inline">Свойства</span>
+          </button>
+
+          {/* PLAYTEST */}
+          <button
+            onClick={() => {
+              const data = constructLevelData(false);
+              onPlaytest(data);
+            }}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition shadow-md cursor-pointer"
+          >
+            <Play className="w-3.5 h-3.5" />
+            <span>Тест</span>
+          </button>
+
           {/* If campaign level and not admin: Show Clone Button */}
           {isCampaignLevel && !isCreatorMode && (
             <button
               onClick={handleCloneAsCustom}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-sm cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Создать копию</span>
+              <span className="hidden sm:inline">Копия</span>
             </button>
           )}
 
-          {/* Save Button */}
+          {/* Local Save */}
           <button
-            onClick={() => handleSave(false)}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+            onClick={() => handleSaveLocal(false)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-emerald-400 border border-zinc-700 text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Сохранить локально"
           >
             <Check className="w-3.5 h-3.5" />
-            <span>{isCampaignLevel && !isCreatorMode ? 'Сохранить как копию' : 'Сохранить'}</span>
-          </button>
-
-          {/* Playtest Button */}
-          <button
-            onClick={() => {
-              const data = constructLevelData();
-              onPlaytest(data);
-            }}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition shadow-sm cursor-pointer"
-          >
-            <Play className="w-3.5 h-3.5" />
-            <span>Тест</span>
+            <span className="hidden sm:inline">Сохранить</span>
           </button>
 
           {/* Reset button */}
@@ -809,7 +1222,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
             </button>
           )}
 
-          {/* Delete (if custom or admin) */}
+          {/* Delete */}
           {(!isCampaignLevel || isCreatorMode) && (
             <button
               onClick={handleDeleteCurrentLevel}
@@ -830,13 +1243,16 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
         </div>
       </header>
 
-      {/* Main Workspace */}
+      {/* MAIN WORKSPACE */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Left/Top Tools Toolbar */}
-        <aside className="w-full md:w-56 bg-zinc-900/80 border-r border-zinc-800 p-2 sm:p-3 flex md:flex-col gap-1.5 overflow-x-auto md:overflow-y-auto shrink-0 custom-scrollbar">
-          <div className="text-[10px] font-bold text-zinc-500 tracking-wider hidden md:block mb-1">
-            ИНСТРУМЕНТЫ
+        {/* Left Toolbar */}
+        <aside className="w-full md:w-56 bg-zinc-900/90 border-r border-zinc-800 p-2 sm:p-3 flex md:flex-col gap-1.5 overflow-x-auto md:overflow-y-auto shrink-0 custom-scrollbar">
+          <div className="text-[10px] font-bold text-zinc-500 tracking-wider hidden md:block mb-1 flex items-center justify-between">
+            <span>ИНСТРУМЕНТЫ</span>
+            <span className="text-[9px] text-zinc-600">{levelCols}x{levelRows}</span>
           </div>
+
+          {/* Tiles tools */}
           {tools.map((t) => {
             const Icon = t.icon;
             const isSelected = selectedTool === t.id;
@@ -858,18 +1274,41 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
               </button>
             );
           })}
+
+          {/* Quick canvas helpers */}
+          <div className="hidden md:flex flex-col gap-1 pt-3 mt-2 border-t border-zinc-800">
+            <button
+              onClick={handleFillPerimeter}
+              className="px-2 py-1.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[11px] text-zinc-400 font-semibold text-left transition cursor-pointer"
+            >
+              🧱 Заполнить рамку
+            </button>
+            <button
+              onClick={handleClearInner}
+              className="px-2 py-1.5 rounded-xl bg-zinc-950 hover:bg-rose-950/40 border border-zinc-800 text-[11px] text-rose-400 font-semibold text-left transition cursor-pointer"
+            >
+              🧹 Очистить внутри
+            </button>
+          </div>
+
+          {/* Saws & objects counters */}
+          <div className="hidden md:block text-[10px] text-zinc-500 pt-2 space-y-0.5">
+            <div>Пилы: <span className="text-zinc-300 font-bold">{saws.length}</span></div>
+            <div>Лазеры: <span className="text-zinc-300 font-bold">{lasers.length}</span></div>
+          </div>
         </aside>
 
-        {/* Center: Canvas Canvas Viewport */}
-        <main className="flex-1 flex items-center justify-center p-2 sm:p-4 bg-zinc-950 overflow-auto">
+        {/* Center: Canvas Viewport */}
+        <main className="flex-1 flex flex-col items-center justify-center p-2 sm:p-4 bg-zinc-950 overflow-auto">
           <div 
-            className="relative shadow-2xl rounded-2xl overflow-hidden border-2 border-zinc-800 bg-black cursor-crosshair"
+            className="relative shadow-2xl rounded-2xl overflow-hidden border-2 border-zinc-800 bg-black cursor-crosshair select-none touch-none"
             style={{
               width: `${levelCols * TILE_SIZE}px`,
               height: `${levelRows * TILE_SIZE}px`,
               maxWidth: '100%',
               maxHeight: '100%',
               aspectRatio: `${levelCols} / ${levelRows}`,
+              touchAction: 'none',
             }}
           >
             <canvas
@@ -879,9 +1318,18 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
-              className="w-full h-full block"
-              style={{ imageRendering: 'pixelated' }}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleMouseUp}
+              className="w-full h-full block touch-none"
+              style={{ imageRendering: 'pixelated', touchAction: 'none' }}
             />
+          </div>
+
+          {/* Bottom quick tip banner */}
+          <div className="mt-2 text-[11px] text-zinc-500 text-center flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Нажмите <b>«Сохранить как базовый для всех»</b>, чтобы эта карта сразу стала официальной для всех игроков!</span>
           </div>
         </main>
       </div>
