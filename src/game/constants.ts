@@ -50,5 +50,5 @@ export const PHYSICS = {
   CORNER_NUDGE_DIST: 3,      // pixel nudge for smooth corner clearing
 };
 
-export const DEFAULT_COLS = 32;
-export const DEFAULT_ROWS = 48;
+export const DEFAULT_COLS = 20;
+export const DEFAULT_ROWS = 30;

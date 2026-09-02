@@ -39,8 +39,8 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
   const [activeLevelId, setActiveLevelId] = useState<number>(initialLevel?.id || 1);
   const isCampaignLevel = activeLevelId <= 15 && activeLevelId !== 999;
 
-  const [levelCols, setLevelCols] = useState<number>(initialLevel?.cols || 32);
-  const [levelRows, setLevelRows] = useState<number>(initialLevel?.rows || 48);
+  const [levelCols, setLevelCols] = useState<number>(initialLevel?.cols || 20);
+  const [levelRows, setLevelRows] = useState<number>(initialLevel?.rows || 30);
 
   const [levelName, setLevelName] = useState<string>(initialLevel?.name || 'CUSTOM HARDCORE LEVEL');
   const [difficulty, setDifficulty] = useState<LevelData['difficulty']>(initialLevel?.difficulty || 'Extreme');
@@ -113,8 +113,8 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
   const handleSelectLevelToEdit = (lvlId: number) => {
     if (lvlId === -1) {
       // Create brand new custom level (ID 999 draft)
-      const cols = 32;
-      const rows = 48;
+      const cols = 20;
+      const rows = 30;
       setActiveLevelId(999);
       setLevelCols(cols);
       setLevelRows(rows);
@@ -147,8 +147,8 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     const found = levels.find((l) => l.id === lvlId);
     if (found) {
       setActiveLevelId(found.id);
-      setLevelCols(found.cols || 32);
-      setLevelRows(found.rows || 48);
+      setLevelCols(found.cols || 20);
+      setLevelRows(found.rows || 30);
       setLevelName(found.name);
       setDifficulty(found.difficulty);
       setParTime(found.parTime);

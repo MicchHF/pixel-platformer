@@ -245,19 +245,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return () => cancelAnimationFrame(animFrameId);
   }, [theme, scanlines, screenShakeEnabled, onLevelComplete, onPlayerDeath, onUpdateHUD]);
 
-  const levelCols = level.cols || 32;
-  const levelRows = level.rows || 48;
+  const levelCols = level.cols || 20;
+  const levelRows = level.rows || 30;
 
   return (
     <div 
       ref={containerRef}
       id="game-viewport-container"
-      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-between overflow-hidden bg-zinc-950 px-2 py-0.5 select-none"
+      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-between overflow-hidden bg-zinc-950 px-1 sm:px-2 py-0.5 select-none"
     >
       {/* Canvas Frame with dynamic level aspect-ratio containment */}
       <div 
         id="pixel-canvas-frame"
-        className="relative w-full max-w-[380px] sm:max-w-[440px] max-h-[52vh] sm:max-h-[58vh] flex items-center justify-center shadow-2xl rounded-2xl overflow-hidden border-2 border-zinc-800 bg-black shrink my-auto"
+        className="relative w-full max-w-[420px] sm:max-w-[480px] max-h-[58vh] sm:max-h-[64vh] flex items-center justify-center shadow-2xl rounded-xl overflow-hidden border border-zinc-800/80 bg-black shrink my-auto"
         style={{
           aspectRatio: `${levelCols} / ${levelRows}`,
           boxShadow: `0 0 30px ${theme.background}88, 0 12px 30px rgba(0,0,0,0.85)`,

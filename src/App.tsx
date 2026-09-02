@@ -20,7 +20,7 @@ import { Swords, X as CloseIcon } from 'lucide-react';
 
 const STORAGE_KEY = 'hardcore_pixel_platformer_v1';
 const LIFETIME_DEATHS_KEY = 'hardcore_pixel_platformer_lifetime_deaths';
-const CUSTOM_LEVELS_STORAGE_KEY = 'hardcore_pixel_platformer_custom_levels_v4_32x48';
+const CUSTOM_LEVELS_STORAGE_KEY = 'hardcore_pixel_platformer_custom_levels_v5_20x30';
 const PLAYER_NAME_KEY = 'pixel_platformer_player_name';
 const CREATOR_MODE_KEY = 'hardcore_platformer_creator_mode';
 
