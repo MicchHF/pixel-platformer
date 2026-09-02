@@ -1,0 +1,6 @@
+{
+  "name": "Hardcore Pixel Platformer",
+  "description": "Минималистичный хардкорный пиксельный платформер высокой сложности с поддержкой встраивания в веб-приложения.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
