@@ -213,7 +213,17 @@ export function updatePhysics(
   onWin: () => void
 ): void {
   // Start level timer on first player movement/action
-  const hasInput = keys.left || keys.right || keys.jump || keys.dash || keys.up || keys.down;
+  const hasInput = 
+    keys.left || 
+    keys.right || 
+    keys.jump || 
+    keys.dash || 
+    keys.dashLeft || 
+    keys.dashRight || 
+    keys.dashUp || 
+    keys.dashDown || 
+    keys.up || 
+    keys.down;
   if (!state.timerStarted && hasInput) {
     state.timerStarted = true;
   }

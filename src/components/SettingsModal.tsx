@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { X, Volume2, VolumeX, Palette, Monitor, Gamepad2, Smartphone, RefreshCw, Music } from 'lucide-react';
+import { X, Volume2, VolumeX, Palette, Monitor, Gamepad2, Smartphone, RefreshCw, Music, Maximize2 } from 'lucide-react';
 import { ThemeName } from '../types/game';
 import { THEMES } from '../game/themes';
 import { sounds } from '../audio/soundManager';
+import { toggleAppFullscreen, haptics } from '../utils/telegram';
 
 interface SettingsModalProps {
   currentTheme: ThemeName;
@@ -187,6 +188,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
               </div>
             </div>
+          </div>
+
+          {/* Fullscreen Mode Card */}
+          <div className="pt-4 border-t border-zinc-800/80 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-bold text-zinc-200 uppercase tracking-wider flex items-center gap-1.5">
+                <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Режим на весь экран</span>
+              </div>
+              <p className="text-[11px] text-zinc-500 mt-0.5">
+                Разворачивает в Telegram / браузере без шторки свайпа
+              </p>
+            </div>
+            <button
+              id="settings-fullscreen-btn"
+              onClick={() => {
+                haptics.light();
+                toggleAppFullscreen();
+              }}
+              className="px-3.5 py-2 rounded-xl bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-600 text-cyan-300 text-xs font-bold transition active:scale-95 cursor-pointer shadow-sm shrink-0 flex items-center gap-1.5"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span>На весь экран</span>
+            </button>
           </div>
 
           {/* 4. Touch Controls Mode */}

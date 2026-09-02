@@ -252,38 +252,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     <div 
       ref={containerRef}
       id="game-viewport-container"
-      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-between overflow-hidden bg-zinc-950 px-1 sm:px-2 py-0.5 select-none"
+      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-between overflow-hidden bg-zinc-950 px-0 sm:px-2 py-0 select-none"
     >
-      {/* Canvas Frame with dynamic level aspect-ratio containment */}
-      <div 
-        id="pixel-canvas-frame"
-        className="relative w-full max-w-[420px] sm:max-w-[480px] max-h-[58vh] sm:max-h-[64vh] flex items-center justify-center shadow-2xl rounded-xl overflow-hidden border border-zinc-800/80 bg-black shrink my-auto"
-        style={{
-          aspectRatio: `${levelCols} / ${levelRows}`,
-          boxShadow: `0 0 30px ${theme.background}88, 0 12px 30px rgba(0,0,0,0.85)`,
-        }}
-      >
-        <canvas
-          ref={canvasRef}
-          id="main-pixel-canvas"
-          width={levelCols * TILE_SIZE}
-          height={levelRows * TILE_SIZE}
-          className="w-full h-full block object-contain"
-          style={{ imageRendering: 'pixelated' }}
-        />
+      {/* Canvas Frame stretching edge-to-edge horizontally on mobile */}
+      <div className="flex-1 w-full min-h-0 flex items-center justify-center my-auto overflow-hidden">
+        <div 
+          id="pixel-canvas-frame"
+          className="relative w-full max-w-full sm:max-w-[440px] flex items-center justify-center shadow-2xl overflow-hidden border-y sm:border border-zinc-800/80 sm:rounded-xl bg-black"
+          style={{
+            aspectRatio: `${levelCols} / ${levelRows}`,
+            maxHeight: '100%',
+            maxWidth: '100%',
+            boxShadow: `0 0 30px ${theme.background}88, 0 12px 30px rgba(0,0,0,0.85)`,
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            id="main-pixel-canvas"
+            width={levelCols * TILE_SIZE}
+            height={levelRows * TILE_SIZE}
+            className="w-full h-full block object-contain"
+            style={{ imageRendering: 'pixelated' }}
+          />
 
-        {/* Pause Overlay */}
-        {isPaused && (
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-xs flex flex-col items-center justify-center font-mono text-zinc-100 animate-fadeIn z-20">
-            <h3 className="text-2xl font-black tracking-widest text-cyan-400 mb-2">ПАУЗА</h3>
-            <p className="text-xs text-zinc-400">Нажмите ▶ Продолжить в меню</p>
-          </div>
-        )}
+          {/* Pause Overlay */}
+          {isPaused && (
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-xs flex flex-col items-center justify-center font-mono text-zinc-100 animate-fadeIn z-20">
+              <h3 className="text-2xl font-black tracking-widest text-cyan-400 mb-2">ПАУЗА</h3>
+              <p className="text-xs text-zinc-400">Нажмите ▶ Продолжить в меню</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Touch D-Pad / Ergonomic Controls for vertical mobile view */}
+      {/* Touch Controls for mobile view */}
       {shouldShowTouch && (
-        <div className="w-full max-w-xl shrink-0 pt-1 pb-safe">
+        <div className="w-full max-w-xl shrink-0 pt-1 pb-safe px-1">
           <TouchControls 
             onKeyChange={handleTouchKey} 
             onQuickRestart={handleRestart}

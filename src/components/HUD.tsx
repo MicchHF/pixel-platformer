@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Skull, Timer, Zap, Key, RotateCcw, Volume2, VolumeX, Settings, Grid, Play, Pause, Trophy, Edit3 } from 'lucide-react';
+import { Skull, Timer, Zap, Key, RotateCcw, Volume2, VolumeX, Settings, Grid, Play, Pause, Trophy, Edit3, Maximize2 } from 'lucide-react';
 import { LevelData, PlayerState, ThemeColors } from '../types/game';
 import { formatHundredths } from '../utils/time';
-import { haptics } from '../utils/telegram';
+import { haptics, toggleAppFullscreen } from '../utils/telegram';
 
 interface HUDProps {
   level: LevelData;
@@ -176,6 +176,19 @@ export const HUD: React.FC<HUDProps> = ({
           className="p-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 transition active:scale-95 cursor-pointer"
         >
           {isMuted ? <VolumeX className="w-3.5 h-3.5 text-zinc-500" /> : <Volume2 className="w-3.5 h-3.5 text-zinc-200" />}
+        </button>
+
+        {/* Fullscreen Toggle */}
+        <button
+          id="hud-fullscreen-btn"
+          onClick={() => {
+            haptics.light();
+            toggleAppFullscreen();
+          }}
+          title="На весь экран"
+          className="p-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-cyan-400 transition active:scale-95 cursor-pointer"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
         </button>
 
         {/* Settings */}

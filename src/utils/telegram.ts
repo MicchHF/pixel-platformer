@@ -30,6 +30,8 @@ interface TelegramWebApp {
   colorScheme?: 'light' | 'dark';
   themeParams?: Record<string, string>;
   isExpanded?: boolean;
+  isFullscreen?: boolean;
+  isVerticalSwipesEnabled?: boolean;
   viewportHeight?: number;
   viewportStableHeight?: number;
   headerColor?: string;
@@ -49,11 +51,18 @@ interface TelegramWebApp {
   ready: () => void;
   expand: () => void;
   close: () => void;
-  setHeaderColor: (color: string) => void;
-  setBackgroundColor: (color: string) => void;
-  enableClosingConfirmation: () => void;
-  openTelegramLink: (url: string) => void;
-  openLink: (url: string) => void;
+  isVersionAtLeast?: (version: string) => boolean;
+  requestFullscreen?: () => void;
+  exitFullscreen?: () => void;
+  disableVerticalSwipes?: () => void;
+  enableVerticalSwipes?: () => void;
+  lockOrientation?: (orientation: 'portrait' | 'landscape') => void;
+  unlockOrientation?: () => void;
+  setHeaderColor?: (color: string) => void;
+  setBackgroundColor?: (color: string) => void;
+  enableClosingConfirmation?: () => void;
+  openTelegramLink?: (url: string) => void;
+  openLink?: (url: string) => void;
   shareToStory?: (mediaUrl: string, params?: unknown) => void;
 }
 
@@ -72,9 +81,62 @@ export function getTelegramWebApp(): TelegramWebApp | null {
   return null;
 }
 
+export function isTgVersionAtLeast(requiredVersion: string): boolean {
+  const tg = getTelegramWebApp();
+  if (!tg) return false;
+  if (typeof tg.isVersionAtLeast === 'function') {
+    try {
+      return tg.isVersionAtLeast(requiredVersion);
+    } catch {
+      // Fallback to manual parsing
+    }
+  }
+  if (!tg.version) return false;
+
+  const currentParts = tg.version.split('.').map((p) => parseInt(p, 10) || 0);
+  const requiredParts = requiredVersion.split('.').map((p) => parseInt(p, 10) || 0);
+
+  for (let i = 0; i < Math.max(currentParts.length, requiredParts.length); i++) {
+    const cur = currentParts[i] || 0;
+    const req = requiredParts[i] || 0;
+    if (cur > req) return true;
+    if (cur < req) return false;
+  }
+  return true;
+}
+
 export function isTelegramWebApp(): boolean {
   const tg = getTelegramWebApp();
   return Boolean(tg && tg.initData !== undefined);
+}
+
+export function toggleAppFullscreen(): boolean {
+  const tg = getTelegramWebApp();
+  if (tg && isTgVersionAtLeast('8.0')) {
+    try {
+      if (tg.isFullscreen && typeof tg.exitFullscreen === 'function') {
+        tg.exitFullscreen();
+        return false;
+      } else if (typeof tg.requestFullscreen === 'function') {
+        tg.requestFullscreen();
+        return true;
+      }
+    } catch {}
+  }
+
+  // Browser standard fallback
+  if (typeof document !== 'undefined') {
+    try {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+        return true;
+      } else {
+        document.exitFullscreen().catch(() => {});
+        return false;
+      }
+    } catch {}
+  }
+  return false;
 }
 
 export function initTelegram(): TelegramUserData {
@@ -83,9 +145,30 @@ export function initTelegram(): TelegramUserData {
     try {
       tg.ready();
       tg.expand();
-      tg.setHeaderColor('#09090b');
-      tg.setBackgroundColor('#09090b');
-      if (typeof tg.enableClosingConfirmation === 'function') {
+      
+      // Modern Telegram 7.7+ API: Prevent vertical swipe-down dismiss
+      if (isTgVersionAtLeast('7.7') && typeof tg.disableVerticalSwipes === 'function') {
+        tg.disableVerticalSwipes();
+      }
+
+      // Modern Telegram 8.0+ API: Fullscreen WebApp
+      if (isTgVersionAtLeast('8.0') && typeof tg.requestFullscreen === 'function') {
+        tg.requestFullscreen();
+      }
+
+      // Lock portrait orientation if supported (Telegram 8.0+)
+      if (isTgVersionAtLeast('8.0') && typeof tg.lockOrientation === 'function') {
+        try {
+          tg.lockOrientation('portrait');
+        } catch {}
+      }
+
+      if (isTgVersionAtLeast('6.1')) {
+        if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor('#090a0f');
+        if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor('#090a0f');
+      }
+
+      if (isTgVersionAtLeast('6.2') && typeof tg.enableClosingConfirmation === 'function') {
         tg.enableClosingConfirmation();
       }
     } catch (e) {
