@@ -16,8 +16,8 @@ export const LevelThumbnail: React.FC<LevelThumbnailProps> = ({ level, size = 80
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const cols = level.cols || 18;
-    const rows = level.rows || 18;
+    const cols = level.cols || 32;
+    const rows = level.rows || 48;
     const cellW = canvas.width / cols;
     const cellH = canvas.height / rows;
 
@@ -150,13 +150,17 @@ export const LevelThumbnail: React.FC<LevelThumbnailProps> = ({ level, size = 80
     ctx.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
   }, [level, size]);
 
+  const cols = level.cols || 32;
+  const rows = level.rows || 48;
+  const thumbHeight = Math.round((size * rows) / cols);
+
   return (
     <canvas
       ref={canvasRef}
       width={size}
-      height={size}
+      height={thumbHeight}
       className="rounded-lg border border-zinc-700 bg-zinc-950 shrink-0 shadow-inner"
-      style={{ width: `${size}px`, height: `${size}px`, imageRendering: 'pixelated' }}
+      style={{ width: `${size}px`, height: `${thumbHeight}px`, imageRendering: 'pixelated' }}
     />
   );
 };
