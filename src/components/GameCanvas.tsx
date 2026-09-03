@@ -284,10 +284,16 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     };
   }, [handleRestart]);
 
-  // Touch control callback
-  const handleTouchKey = (key: keyof ControlKeys, pressed: boolean) => {
+  // Track edge triggers / micro-taps between 60fps frames so quick taps are never dropped
+  const justPressedBufferRef = useRef<{ [K in keyof ControlKeys]?: boolean }>({});
+
+  // Touch control callback with tap buffering
+  const handleTouchKey = useCallback((key: keyof ControlKeys, pressed: boolean) => {
     keysRef.current[key] = pressed;
-  };
+    if (pressed) {
+      justPressedBufferRef.current[key] = true;
+    }
+  }, []);
 
   // Main 60 FPS Game Loop
   useEffect(() => {
@@ -303,11 +309,25 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       const ctx = canvas?.getContext('2d');
       const state = gameStateRef.current;
 
+      // Prepare active frame keys incorporating buffered taps so micro-taps never miss a frame
+      const keys: ControlKeys = { ...keysRef.current };
+      if (justPressedBufferRef.current.jump) keys.jump = true;
+      if (justPressedBufferRef.current.dash) keys.dash = true;
+      if (justPressedBufferRef.current.dashUp) keys.dashUp = true;
+      if (justPressedBufferRef.current.dashLeft) keys.dashLeft = true;
+      if (justPressedBufferRef.current.dashRight) keys.dashRight = true;
+      if (justPressedBufferRef.current.left) keys.left = true;
+      if (justPressedBufferRef.current.right) keys.right = true;
+      if (justPressedBufferRef.current.up) keys.up = true;
+      if (justPressedBufferRef.current.down) keys.down = true;
+
+      // Clear buffer for next frame
+      justPressedBufferRef.current = {};
+
       // Poll Gamepad if connected
       const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
       const gp = gamepads[0];
       if (gp) {
-        const keys = keysRef.current;
         const axisX = gp.axes[0] || 0;
         const axisY = gp.axes[1] || 0;
         keys.left = keys.left || axisX < -0.3 || gp.buttons[14]?.pressed;
@@ -322,7 +342,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         // Run physics update
         updatePhysics(
           state,
-          keysRef.current,
+          keys,
           prevKeysRef.current,
           dt,
           // On Death Callback
@@ -368,7 +388,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
 
       // Store current keys for next frame's edge-trigger checks
-      prevKeysRef.current = { ...keysRef.current };
+      prevKeysRef.current = { ...keys };
 
       // Render Canvas
       if (ctx && canvas) {
