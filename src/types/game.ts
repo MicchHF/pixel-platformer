@@ -56,6 +56,24 @@ export interface TimedLaser {
   phaseOffset: number; // start offset in seconds
 }
 
+export interface SeekerEnemy {
+  id: string;
+  x: number;
+  y: number;
+  startX: number;
+  startY: number;
+  vx: number;
+  vy: number;
+  speed: number;
+  radius: number;
+  state: 'seeking' | 'knocked_back' | 'stunned';
+  knockbackTimer: number;
+  stunTimer: number;
+  angle: number;
+  eyeAngle: number;
+  pulse: number;
+}
+
 export interface CrumbleBlock {
   id: string;
   gridX: number;
@@ -96,6 +114,11 @@ export interface LevelData {
     period: number;
     activeTime: number;
     phaseOffset?: number;
+  }>;
+  seekers?: Array<{
+    x: number;
+    y: number;
+    speed?: number;
   }>;
   hint?: string;
 }

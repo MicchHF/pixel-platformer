@@ -6,39 +6,44 @@ import { haptics, toggleAppFullscreen } from '../utils/telegram';
 
 interface HUDProps {
   level: LevelData;
-  player: PlayerState;
-  levelTime: number;
-  deaths: number;
+  player?: PlayerState;
+  levelTime?: number;
+  time?: number;
+  deaths?: number;
   totalLifetimeDeaths?: number;
+  lifetimeDeaths?: number;
   bestTime?: number;
-  theme: ThemeColors;
-  isPaused: boolean;
-  isMuted: boolean;
-  isBgmPlaying: boolean;
+  theme?: ThemeColors;
+  isPaused?: boolean;
+  isMuted?: boolean;
+  isBgmPlaying?: boolean;
   compact?: boolean;
   isCreatorMode?: boolean;
-  onRestart: () => void;
-  onTogglePause: () => void;
-  onToggleMute: () => void;
-  onToggleBgm: () => void;
-  onOpenLevelSelect: () => void;
-  onOpenLeaderboard: () => void;
-  onOpenSettings: () => void;
-  onOpenEmbed: () => void;
-  onOpenEditor: () => void;
+  onRestart?: () => void;
+  onTogglePause?: () => void;
+  onToggleMute?: () => void;
+  onToggleBgm?: () => void;
+  onOpenLevelSelect?: () => void;
+  onOpenLevels?: () => void;
+  onOpenLeaderboard?: () => void;
+  onOpenSettings?: () => void;
+  onOpenEmbed?: () => void;
+  onOpenEditor?: () => void;
 }
 
-export const HUD: React.FC<HUDProps> = ({
+const HUDComponent: React.FC<HUDProps> = ({
   level,
   player,
   levelTime,
-  deaths,
-  totalLifetimeDeaths = 0,
+  time,
+  deaths = 0,
+  totalLifetimeDeaths,
+  lifetimeDeaths,
   bestTime,
   theme,
-  isPaused,
-  isMuted,
-  isBgmPlaying,
+  isPaused = false,
+  isMuted = false,
+  isBgmPlaying = false,
   compact = false,
   isCreatorMode = false,
   onRestart,
@@ -46,6 +51,7 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleMute,
   onToggleBgm,
   onOpenLevelSelect,
+  onOpenLevels,
   onOpenLeaderboard,
   onOpenSettings,
   onOpenEmbed,
@@ -61,6 +67,10 @@ export const HUD: React.FC<HUDProps> = ({
     }
   }, [deaths]);
 
+  const activeTime = levelTime !== undefined ? levelTime : (time ?? 0);
+  const activeLifetimeDeaths = totalLifetimeDeaths !== undefined ? totalLifetimeDeaths : (lifetimeDeaths ?? 0);
+  const handleOpenLevels = onOpenLevelSelect || onOpenLevels || (() => {});
+
   const difficultyColors = {
     Hard: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
     Brutal: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
@@ -71,17 +81,17 @@ export const HUD: React.FC<HUDProps> = ({
 
   const handleLevelClick = () => {
     haptics.selection();
-    onOpenLevelSelect();
+    handleOpenLevels();
   };
 
   const handleLeaderboardClick = () => {
     haptics.selection();
-    onOpenLeaderboard();
+    onOpenLeaderboard?.();
   };
 
   const handleRestartClick = () => {
     haptics.medium();
-    onRestart();
+    onRestart?.();
   };
 
   return (
@@ -104,7 +114,7 @@ export const HUD: React.FC<HUDProps> = ({
           {level.difficulty}
         </span>
 
-        {player.hasKey && (
+        {player?.hasKey && (
           <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold animate-pulse">
             <Key className="w-3 h-3" />
             <span>KEY</span>
@@ -122,7 +132,7 @@ export const HUD: React.FC<HUDProps> = ({
               ? 'bg-rose-600/50 border-rose-500 text-white scale-105 shadow-md shadow-rose-500/40' 
               : 'bg-zinc-950/90 border-zinc-800 text-rose-400'
           }`}
-          title={`Смертей на этом уровне: ${deaths} | Всего: ${totalLifetimeDeaths}`}
+          title={`Смертей на этом уровне: ${deaths} | Всего: ${activeLifetimeDeaths}`}
         >
           <Skull className={`w-3.5 h-3.5 text-rose-500 ${deathPulse ? 'animate-spin' : ''}`} />
           <span className="font-black tabular-nums">{deaths}</span>
@@ -131,7 +141,7 @@ export const HUD: React.FC<HUDProps> = ({
         {/* Live Timer */}
         <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-zinc-950/90 border border-zinc-800 text-cyan-400">
           <Timer className="w-3.5 h-3.5 text-cyan-500" />
-          <span className="tabular-nums font-bold tracking-wider">{formatHundredths(levelTime)}</span>
+          <span className="tabular-nums font-bold tracking-wider">{formatHundredths(activeTime)}</span>
         </div>
       </div>
 
@@ -204,3 +214,5 @@ export const HUD: React.FC<HUDProps> = ({
     </header>
   );
 };
+
+export const HUD = React.memo(HUDComponent);

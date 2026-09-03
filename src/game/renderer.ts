@@ -177,6 +177,11 @@ export function renderGame(
     drawSaw(ctx, saw.x, saw.y, saw.radius, saw.angle, theme);
   });
 
+  // 3.5. Draw Seeker Enemies
+  (state.seekers || []).forEach((seeker) => {
+    drawSeeker(ctx, seeker, state.levelTime, theme);
+  });
+
   // 4. Draw Particles
   particles.forEach((part) => {
     ctx.fillStyle = part.color;
@@ -537,6 +542,95 @@ function drawPlayer(
   if (hasDash) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(offX + Math.floor(drawW / 2) - 1, offY + Math.floor(drawH / 2) - 1, 2, 2);
+  }
+
+  ctx.restore();
+}
+
+function drawSeeker(
+  ctx: CanvasRenderingContext2D,
+  seeker: GameEngineState['seekers'][0],
+  time: number,
+  theme: ThemeColors
+) {
+  ctx.save();
+  ctx.translate(Math.floor(seeker.x), Math.floor(seeker.y));
+  ctx.rotate(seeker.angle);
+
+  const isStunned = seeker.state === 'stunned';
+  const isKnocked = seeker.state === 'knocked_back';
+
+  // Outer danger pulse ring (when seeking)
+  if (!isStunned && !isKnocked) {
+    const pulseR = seeker.radius + Math.sin(time * 8) * 2;
+    ctx.strokeStyle = 'rgba(244, 63, 94, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(0, 0, pulseR, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Hull wings/prongs (triangular sci-fi drone silhouette)
+  const hullColor = isKnocked ? '#38bdf8' : isStunned ? '#64748b' : '#0f172a';
+  const rimColor = isKnocked ? '#ffffff' : isStunned ? '#f59e0b' : '#f43f5e';
+
+  ctx.fillStyle = hullColor;
+  ctx.beginPath();
+  const prongs = 4;
+  for (let i = 0; i < prongs; i++) {
+    const a = (i * Math.PI * 2) / prongs + (isKnocked ? time * 12 : 0);
+    const rOut = seeker.radius + 2;
+    const rIn = seeker.radius - 3;
+    const px = Math.cos(a) * rOut;
+    const py = Math.sin(a) * rOut;
+    const bx = Math.cos(a + Math.PI / prongs) * rIn;
+    const by = Math.sin(a + Math.PI / prongs) * rIn;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+    ctx.lineTo(bx, by);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = rimColor;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Core drone sphere
+  ctx.fillStyle = isKnocked ? '#0284c7' : isStunned ? '#475569' : '#1e1b4b';
+  ctx.beginPath();
+  ctx.arc(0, 0, seeker.radius - 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Glowing cybernetic eye (tracks player angle unless stunned)
+  if (isStunned) {
+    // Dazed spiral/cross
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(-2, -0.5, 4, 1);
+    ctx.fillRect(-0.5, -2, 1, 4);
+
+    // Stun halo stars
+    const starAngle = time * 6;
+    for (let s = 0; s < 3; s++) {
+      const sa = starAngle + (s * Math.PI * 2) / 3;
+      const sx = Math.cos(sa) * (seeker.radius + 4);
+      const sy = Math.sin(sa) * (seeker.radius + 4) * 0.4 - 5;
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(sx - 1, sy - 1, 2, 2);
+    }
+  } else {
+    // Glowing red/cyan eye looking at player
+    const eyeLookX = Math.cos(seeker.eyeAngle) * 2.5;
+    const eyeLookY = Math.sin(seeker.eyeAngle) * 2.5;
+
+    ctx.fillStyle = isKnocked ? '#38bdf8' : '#e11d48';
+    ctx.beginPath();
+    ctx.arc(eyeLookX, eyeLookY, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bright pupil gleam
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(eyeLookX - 0.5, eyeLookY - 0.5, 1.5, 1.5);
   }
 
   ctx.restore();

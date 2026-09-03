@@ -11,6 +11,9 @@ import { haptics } from '../utils/telegram';
 import { saveLevelAsServerBase, saveAllLevelsAsServerBase } from '../services/levelsApi';
 
 const TOOL_SAW = 99;
+const TOOL_LASER_H = 98;
+const TOOL_LASER_V = 97;
+const TOOL_SEEKER = 96;
 const ADMIN_PIN = '7777';
 
 interface LevelEditorProps {
@@ -70,7 +73,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     onConfirm: () => void;
   } | null>(null);
 
-  // Moving Saws & Lasers state
+  // Moving Saws, Lasers & Seekers state
   const [saws, setSaws] = useState<Array<{
     startX: number;
     startY: number;
@@ -88,6 +91,25 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     activeTime: number;
     phaseOffset?: number;
   }>>(() => (initialLevel?.lasers ? JSON.parse(JSON.stringify(initialLevel.lasers)) : []));
+
+  const [seekers, setSeekers] = useState<Array<{
+    x: number;
+    y: number;
+    speed?: number;
+  }>>(() => (initialLevel?.seekers ? JSON.parse(JSON.stringify(initialLevel.seekers)) : []));
+
+  // Laser placement configuration
+  const [laserConfig, setLaserConfig] = useState<{
+    length: number;
+    period: number;
+    activeTime: number;
+    phaseOffset: number;
+  }>({
+    length: 6,
+    period: 2.0,
+    activeTime: 1.0,
+    phaseOffset: 0.0,
+  });
 
   const [sawDrag, setSawDrag] = useState<{ startX: number; startY: number; currX: number; currY: number } | null>(null);
 
@@ -130,6 +152,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
       setHint('');
       setSaws([]);
       setLasers([]);
+      setSeekers([]);
       const g: number[][] = [];
       for (let r = 0; r < rows; r++) {
         const row: number[] = [];
@@ -162,6 +185,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
       setGrid(JSON.parse(JSON.stringify(found.grid)));
       setSaws(found.saws ? JSON.parse(JSON.stringify(found.saws)) : []);
       setLasers(found.lasers ? JSON.parse(JSON.stringify(found.lasers)) : []);
+      setSeekers(found.seekers ? JSON.parse(JSON.stringify(found.seekers)) : []);
     }
   };
 
@@ -204,6 +228,9 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     { id: TILES.SPIKE_LEFT, name: 'Шип ◄', icon: Shield, color: theme.spike },
     { id: TILES.SPIKE_RIGHT, name: 'Шип ►', icon: Shield, color: theme.spike },
     { id: TOOL_SAW, name: 'Пила', icon: Disc, color: theme.saw },
+    { id: TOOL_LASER_H, name: 'Лазер ◄►', icon: Zap, color: '#ef4444' },
+    { id: TOOL_LASER_V, name: 'Лазер ▲▼', icon: Zap, color: '#f43f5e' },
+    { id: TOOL_SEEKER, name: 'Ищейка (Дрон)', icon: Eye, color: '#ec4899' },
     { id: TILES.SPRING, name: 'Пружина', icon: Zap, color: theme.spring },
     { id: TILES.DASH_CRYSTAL, name: 'Алмаз', icon: Zap, color: theme.crystal },
     { id: TILES.KEY, name: 'Ключ', icon: Key, color: theme.key },
@@ -369,21 +396,85 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
       ctx.save();
       const lx = l.gridX * TILE_SIZE;
       const ly = l.gridY * TILE_SIZE;
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(lx + 2, ly + 2, 12, 12);
 
-      ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([3, 3]);
+      // Emitter base box
+      ctx.fillStyle = l.type === 'laser_v' ? '#e11d48' : '#ef4444';
+      ctx.fillRect(lx + 1, ly + 1, 14, 14);
+
+      // Inner metallic core
+      ctx.fillStyle = '#1e1b4b';
+      ctx.fillRect(lx + 3, ly + 3, 10, 10);
+
+      // Warning laser lens
+      ctx.fillStyle = '#fbbf24';
+      if (l.type === 'laser_v') {
+        ctx.fillRect(lx + 5, ly + 10, 6, 3);
+      } else {
+        ctx.fillRect(lx + 10, ly + 5, 3, 6);
+      }
+
+      // Beam path preview
+      ctx.strokeStyle = l.type === 'laser_v' ? 'rgba(244, 63, 94, 0.85)' : 'rgba(239, 68, 68, 0.85)';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([4, 3]);
       ctx.beginPath();
       if (l.type === 'laser_v') {
-        ctx.moveTo(lx + 8, ly + 8);
-        ctx.lineTo(lx + 8, (l.gridY + l.length) * TILE_SIZE);
+        ctx.moveTo(lx + 8, ly + 14);
+        ctx.lineTo(lx + 8, Math.min(levelRows * TILE_SIZE - 8, (l.gridY + l.length) * TILE_SIZE));
       } else {
-        ctx.moveTo(lx + 8, ly + 8);
-        ctx.lineTo((l.gridX + l.length) * TILE_SIZE, ly + 8);
+        ctx.moveTo(lx + 14, ly + 8);
+        ctx.lineTo(Math.min(levelCols * TILE_SIZE - 8, (l.gridX + l.length) * TILE_SIZE), ly + 8);
       }
       ctx.stroke();
+
+      // Info badge: length & timing
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '8px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${l.length}L`, lx + 8, ly + 8);
+
+      ctx.restore();
+    });
+
+    // Draw Seekers (Cyber Drones)
+    seekers.forEach((sk, idx) => {
+      ctx.save();
+      const sx = Math.floor(sk.x);
+      const sy = Math.floor(sk.y);
+      const rad = 8;
+
+      // Outer danger radar pulse ring
+      ctx.strokeStyle = 'rgba(236, 72, 153, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad + 4, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Drone hull
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#ec4899';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Glowing cybernetic eye
+      ctx.fillStyle = '#f43f5e';
+      ctx.beginPath();
+      ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Label #
+      ctx.fillStyle = '#fbcfe8';
+      ctx.font = '7px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`D${idx + 1}`, sx, sy - 11);
+
       ctx.restore();
     });
 
@@ -418,7 +509,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
       renderSawBlade(ctx, sawDrag.currX, sawDrag.currY, 10, true);
       ctx.restore();
     }
-  }, [grid, theme, saws, lasers, sawDrag, levelCols, levelRows]);
+  }, [grid, theme, saws, lasers, seekers, sawDrag, levelCols, levelRows]);
 
   const applyTileAtCoord = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
@@ -436,7 +527,65 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     if (selectedTool === TOOL_SAW) return;
 
     if (col >= 0 && col < levelCols && row >= 0 && row < levelRows) {
+      // 1. TOOL_LASER_H
+      if (selectedTool === TOOL_LASER_H) {
+        setLasers((prev) => {
+          const filtered = prev.filter((l) => !(l.gridX === col && l.gridY === row));
+          return [
+            ...filtered,
+            {
+              gridX: col,
+              gridY: row,
+              type: 'laser_h',
+              length: laserConfig.length,
+              period: laserConfig.period,
+              activeTime: laserConfig.activeTime,
+              phaseOffset: laserConfig.phaseOffset,
+            },
+          ];
+        });
+        haptics.selection();
+        return;
+      }
+
+      // 2. TOOL_LASER_V
+      if (selectedTool === TOOL_LASER_V) {
+        setLasers((prev) => {
+          const filtered = prev.filter((l) => !(l.gridX === col && l.gridY === row));
+          return [
+            ...filtered,
+            {
+              gridX: col,
+              gridY: row,
+              type: 'laser_v',
+              length: laserConfig.length,
+              period: laserConfig.period,
+              activeTime: laserConfig.activeTime,
+              phaseOffset: laserConfig.phaseOffset,
+            },
+          ];
+        });
+        haptics.selection();
+        return;
+      }
+
+      // 3. TOOL_SEEKER
+      if (selectedTool === TOOL_SEEKER) {
+        setSeekers((prev) => [
+          ...prev,
+          {
+            x: clickX,
+            y: clickY,
+            speed: 38,
+          },
+        ]);
+        haptics.selection();
+        return;
+      }
+
+      // 4. TILES.EMPTY (Erase tool: deletes tiles, nearby saws, lasers, and seekers)
       if (selectedTool === TILES.EMPTY) {
+        // Erase moving saw
         const sawIdx = saws.findIndex((s) => {
           const dStart = Math.hypot(s.startX - clickX, s.startY - clickY);
           const dTarget = Math.hypot(s.targetX - clickX, s.targetY - clickY);
@@ -444,6 +593,29 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
         });
         if (sawIdx !== -1) {
           setSaws((prev) => prev.filter((_, i) => i !== sawIdx));
+          haptics.light();
+          return;
+        }
+
+        // Erase seeker
+        const seekerIdx = seekers.findIndex((sk) => Math.hypot(sk.x - clickX, sk.y - clickY) < 16);
+        if (seekerIdx !== -1) {
+          setSeekers((prev) => prev.filter((_, i) => i !== seekerIdx));
+          haptics.light();
+          return;
+        }
+
+        // Erase laser emitter
+        const laserIdx = lasers.findIndex((l) => {
+          if (l.gridX === col && l.gridY === row) return true;
+          // Also check if clicking along beam
+          if (l.type === 'laser_v' && l.gridX === col && row >= l.gridY && row <= l.gridY + l.length) return true;
+          if (l.type === 'laser_h' && l.gridY === row && col >= l.gridX && col <= l.gridX + l.length) return true;
+          return false;
+        });
+        if (laserIdx !== -1) {
+          setLasers((prev) => prev.filter((_, i) => i !== laserIdx));
+          haptics.light();
           return;
         }
       }
@@ -590,8 +762,9 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
       grid,
       saws: saws.length > 0 ? saws : undefined,
       lasers: lasers.length > 0 ? lasers : undefined,
+      seekers: seekers.length > 0 ? seekers : undefined,
     };
-  }, [activeLevelId, isCreatorMode, isCampaignLevel, levels, levelName, difficulty, parTime, levelCols, levelRows, hint, grid, saws, lasers]);
+  }, [activeLevelId, isCreatorMode, isCampaignLevel, levels, levelName, difficulty, parTime, levelCols, levelRows, hint, grid, saws, lasers, seekers]);
 
   // Save level locally
   const handleSaveLocal = (asNew: boolean = false) => {
@@ -812,6 +985,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
     });
     setSaws([]);
     setLasers([]);
+    setSeekers([]);
     haptics.light();
   };
 
@@ -1275,6 +1449,63 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
             );
           })}
 
+          {/* Quick laser tuning widget when laser tool is selected */}
+          {(selectedTool === TOOL_LASER_H || selectedTool === TOOL_LASER_V) && (
+            <div className="p-2 rounded-xl bg-zinc-950/80 border border-red-900/60 text-[10px] space-y-1.5 mt-1 shrink-0">
+              <div className="flex items-center justify-between text-rose-400 font-bold">
+                <span>НАСТРОЙКА ЛАЗЕРА</span>
+                <Zap className="w-3 h-3 text-rose-400" />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">Длина (тайлов):</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={25}
+                  value={laserConfig.length}
+                  onChange={(e) => setLaserConfig((prev) => ({ ...prev, length: parseInt(e.target.value, 10) || 6 }))}
+                  className="w-12 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-center text-white font-bold"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">Период (сек):</span>
+                <input
+                  type="number"
+                  step={0.5}
+                  min={0.5}
+                  max={10}
+                  value={laserConfig.period}
+                  onChange={(e) => setLaserConfig((prev) => ({ ...prev, period: parseFloat(e.target.value) || 2.0 }))}
+                  className="w-12 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-center text-white font-bold"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">Активен (сек):</span>
+                <input
+                  type="number"
+                  step={0.5}
+                  min={0.2}
+                  max={10}
+                  value={laserConfig.activeTime}
+                  onChange={(e) => setLaserConfig((prev) => ({ ...prev, activeTime: parseFloat(e.target.value) || 1.0 }))}
+                  className="w-12 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-center text-white font-bold"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">Фаза / Задержка:</span>
+                <input
+                  type="number"
+                  step={0.5}
+                  min={0}
+                  max={10}
+                  value={laserConfig.phaseOffset}
+                  onChange={(e) => setLaserConfig((prev) => ({ ...prev, phaseOffset: parseFloat(e.target.value) || 0 }))}
+                  className="w-12 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-center text-white font-bold"
+                />
+              </div>
+            </div>
+          )}
+
           {/* Quick canvas helpers */}
           <div className="hidden md:flex flex-col gap-1 pt-3 mt-2 border-t border-zinc-800">
             <button
@@ -1295,6 +1526,7 @@ export const LevelEditor: React.FC<LevelEditorProps> = ({
           <div className="hidden md:block text-[10px] text-zinc-500 pt-2 space-y-0.5">
             <div>Пилы: <span className="text-zinc-300 font-bold">{saws.length}</span></div>
             <div>Лазеры: <span className="text-zinc-300 font-bold">{lasers.length}</span></div>
+            <div>Ищейки (Дроны): <span className="text-zinc-300 font-bold">{seekers.length}</span></div>
           </div>
         </aside>
 

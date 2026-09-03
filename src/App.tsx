@@ -21,7 +21,7 @@ import { Swords, X as CloseIcon } from 'lucide-react';
 
 const STORAGE_KEY = 'hardcore_pixel_platformer_v1';
 const LIFETIME_DEATHS_KEY = 'hardcore_pixel_platformer_lifetime_deaths';
-const CUSTOM_LEVELS_STORAGE_KEY = 'hardcore_pixel_platformer_custom_levels_v5_20x30';
+const CUSTOM_LEVELS_STORAGE_KEY = 'hardcore_pixel_platformer_custom_levels_v6_base_sync';
 const PLAYER_NAME_KEY = 'pixel_platformer_player_name';
 const CREATOR_MODE_KEY = 'hardcore_platformer_creator_mode';
 
@@ -32,7 +32,6 @@ function loadStoredLevels(): LevelData[] {
     // Check if user has custom created levels
     const stored = localStorage.getItem(CUSTOM_LEVELS_STORAGE_KEY);
     if (!stored) {
-      // Save current 18x18 levels
       try {
         localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(LEVELS));
       } catch {}
@@ -45,7 +44,7 @@ function loadStoredLevels(): LevelData[] {
     // Filter only genuine custom user levels (id > 15)
     const customOnly = parsed.filter((lvl) => lvl.id > 15);
     
-    // Always guarantee the official 15 campaign levels are fresh 18x18 maps
+    // Always guarantee the official 15 campaign levels are fresh base maps
     const merged = [...LEVELS, ...customOnly];
     return merged;
   } catch {
@@ -67,16 +66,17 @@ export default function App() {
     return 'Бегущий';
   });
 
-  const handleUpdatePlayerName = useCallback((newName: string) => {
-    setPlayerName(newName);
+  const handleUpdatePlayerName = useCallback((name: string) => {
+    const clean = name.trim().slice(0, 24) || 'Бегущий';
+    setPlayerName(clean);
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem(PLAYER_NAME_KEY, newName);
+        localStorage.setItem(PLAYER_NAME_KEY, clean);
       } catch {}
     }
   }, []);
 
-  // Creator Mode State (Allows admin to edit campaign levels 1-15)
+  // Admin / Creator Mode (Allows modifying base campaign levels)
   const [isCreatorMode, setIsCreatorMode] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -146,7 +146,7 @@ export default function App() {
     sounds.setBgmVolume(bgmVolume);
   }, [isMuted, sfxVolume, bgmVolume]);
 
-  // Synchronize server base levels across all players/devices
+  // Synchronize server base levels across all players/devices (especially in Telegram)
   useEffect(() => {
     fetchServerBaseLevels().then((serverLevels) => {
       if (serverLevels && Array.isArray(serverLevels) && serverLevels.length > 0) {
@@ -194,7 +194,7 @@ export default function App() {
     return {};
   });
 
-  // Modal Views State
+  // Modal Views
   const [showLevelSelect, setShowLevelSelect] = useState<boolean>(false);
   const [showSettings, setShowSettings] = useState<boolean>(false);
   const [showEditor, setShowEditor] = useState<boolean>(false);
@@ -204,43 +204,11 @@ export default function App() {
     level: LevelData;
     time: number;
     deaths: number;
-    isAllCompleted: boolean;
+    isNewRecord: boolean;
     rank?: number;
   } | null>(null);
 
-  // Active Screen Calculation for bottom nav
-  const activeNavScreen = useMemo<'game' | 'levels' | 'leaderboard' | 'editor' | 'settings'>(() => {
-    if (showEditor) return 'editor';
-    if (showLeaderboard) return 'leaderboard';
-    if (showLevelSelect) return 'levels';
-    if (showSettings) return 'settings';
-    return 'game';
-  }, [showEditor, showLeaderboard, showLevelSelect, showSettings]);
-
-  const handleBottomNav = (screen: 'game' | 'levels' | 'leaderboard' | 'editor' | 'settings') => {
-    setShowLevelSelect(false);
-    setShowLeaderboard(false);
-    setShowEditor(false);
-    setShowSettings(false);
-    setShowEmbedDrawer(false);
-
-    if (screen === 'levels') setShowLevelSelect(true);
-    else if (screen === 'leaderboard') setShowLeaderboard(true);
-    else if (screen === 'editor') setShowEditor(true);
-    else if (screen === 'settings') setShowSettings(true);
-  };
-
-  // Sync lifetime stats and level records to storage
-  const saveRecords = (newRecords: Record<number, LevelRecord>) => {
-    setRecords(newRecords);
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(newRecords));
-      } catch {}
-    }
-  };
-
-  // Sync batch records online
+  // Batch sync local records to leaderboard server on startup
   useEffect(() => {
     if (Object.keys(records).length > 0) {
       batchSyncRecords(
@@ -248,19 +216,34 @@ export default function App() {
         records,
         tgUser.username,
         tgUser.id,
-        tgUser.id ? 'telegram' : 'web'
-      ).catch(() => {});
+        tgUser.isTelegram ? 'telegram' : 'web'
+      );
     }
-  }, [records, tgUser, playerName]);
+  }, []); // Run once on startup
 
-  // Handlers
-  const handleUpdateHUD = useCallback((player: GameEngineState['player'], time: number, deaths: number) => {
-    setHudPlayer(player);
-    setHudTime(time);
-    setHudDeaths(deaths);
+  // Save Progress
+  const updateRecords = useCallback((levelId: number, time: number, deaths: number) => {
+    setRecords((prev) => {
+      const existing = prev[levelId];
+      const isNewBest = !existing || time < existing.bestTime;
+      const updatedRecord: LevelRecord = {
+        completed: true,
+        bestTime: isNewBest ? time : existing.bestTime,
+        deaths: isNewBest ? deaths : Math.min(existing.deaths, deaths),
+        stars: 3,
+      };
+
+      const next = { ...prev, [levelId]: updatedRecord };
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
   }, []);
 
-  const handlePlayerDeath = useCallback((levelId: number, currentDeaths: number) => {
+  const incrementLifetimeDeaths = useCallback(() => {
     setLifetimeDeaths((prev) => {
       const next = prev + 1;
       if (typeof window !== 'undefined') {
@@ -270,101 +253,110 @@ export default function App() {
       }
       return next;
     });
-
-    setRecords((prev) => {
-      const existing = prev[levelId] || { completed: false, bestTime: 999999, deaths: 0 };
-      const updated = {
-        ...prev,
-        [levelId]: {
-          ...existing,
-          deaths: (existing.deaths || 0) + 1,
-        },
-      };
-      saveRecords(updated);
-      return updated;
-    });
   }, []);
 
-  const handleLevelComplete = useCallback(async (levelId: number, time: number, currentDeaths: number) => {
-    sounds.playWin();
+  // Audio start on first interaction
+  const startBgmOnce = useCallback(() => {
+    if (!isBgmPlaying && !isMuted) {
+      sounds.startBgm();
+      setIsBgmPlaying(true);
+    }
+  }, [isBgmPlaying, isMuted]);
 
-    // Check if new record
-    const existing = records[levelId];
-    const isNewBest = !existing || !existing.completed || time < existing.bestTime;
-    const bestTime = isNewBest ? time : existing.bestTime;
-
-    const updatedRecords = {
-      ...records,
-      [levelId]: {
-        completed: true,
-        bestTime,
-        deaths: (existing?.deaths || 0) + currentDeaths,
-      },
+  useEffect(() => {
+    const handleFirstUserGesture = () => {
+      startBgmOnce();
+      window.removeEventListener('click', handleFirstUserGesture);
+      window.removeEventListener('keydown', handleFirstUserGesture);
+      window.removeEventListener('touchstart', handleFirstUserGesture);
     };
-    saveRecords(updatedRecords);
 
-    // Check if all levels completed
-    const allCompleted = levels.every((lvl) => updatedRecords[lvl.id]?.completed);
+    window.addEventListener('click', handleFirstUserGesture);
+    window.addEventListener('keydown', handleFirstUserGesture);
+    window.addEventListener('touchstart', handleFirstUserGesture);
 
-    // Online submission
-    let rank: number | undefined;
-    try {
-      const resp = await submitScoreToLeaderboard({
-        levelId,
-        time,
-        deaths: currentDeaths,
-        tgId: tgUser.id,
-        username: tgUser.username,
-        playerName,
-      });
-      if (resp.success && resp.rank) {
-        rank = resp.rank;
-      }
-    } catch {}
+    return () => {
+      window.removeEventListener('click', handleFirstUserGesture);
+      window.removeEventListener('keydown', handleFirstUserGesture);
+      window.removeEventListener('touchstart', handleFirstUserGesture);
+    };
+  }, [startBgmOnce]);
 
-    const completedLvl = levels.find((l) => l.id === levelId) || currentLevel;
-    setVictoryData({
-      level: completedLvl,
+  // HUD update handler memoized to avoid re-renders
+  const handleHudUpdate = useCallback((p: GameEngineState['player'], t: number, d: number) => {
+    setHudPlayer(p);
+    setHudTime(t);
+    setHudDeaths(d);
+  }, []);
+
+  // Level Complete Event Handler
+  const handleLevelWin = useCallback((level: LevelData, time: number, deaths: number) => {
+    haptics.success();
+    const existing = records[level.id];
+    const isNewRecord = !existing || time < existing.bestTime;
+
+    updateRecords(level.id, time, deaths);
+
+    // Auto submit to server leaderboard
+    submitScoreToLeaderboard({
+      levelId: level.id,
       time,
-      deaths: currentDeaths,
-      isAllCompleted: allCompleted,
-      rank,
+      deaths,
+      playerName,
+      username: tgUser.username,
+      tgId: tgUser.id,
+      platform: tgUser.isTelegram ? 'telegram' : 'web',
+    }).then((res) => {
+      setVictoryData({
+        level,
+        time,
+        deaths,
+        isNewRecord,
+        rank: res?.rank,
+      });
+    }).catch(() => {
+      setVictoryData({
+        level,
+        time,
+        deaths,
+        isNewRecord,
+      });
     });
-  }, [records, levels, currentLevel, tgUser, playerName]);
+  }, [records, playerName, tgUser, updateRecords]);
 
+  // Next Level Handler
   const handleNextLevel = () => {
     setVictoryData(null);
     if (currentLevelIndex < levels.length - 1) {
       setCurrentLevelIndex(currentLevelIndex + 1);
     } else {
+      // Completed all campaign levels
       setShowLevelSelect(true);
     }
   };
 
-  const handleSelectLevel = useCallback((lvl: LevelData) => {
-    const idx = levels.findIndex((l) => l.id === lvl.id);
-    if (idx !== -1) {
-      setCurrentLevelIndex(idx);
-    } else {
-      setLevels((prev) => [...prev, lvl]);
-      setCurrentLevelIndex(levels.length);
-    }
-    setHudTime(0);
-    setHudDeaths(0);
-    setIsPaused(false);
-  }, [levels]);
-
-  const handleRestart = useCallback(() => {
+  // Quick Restart Trigger
+  const handleQuickRestart = useCallback(() => {
     setRestartSignal((prev) => prev + 1);
   }, []);
 
-  const handleToggleMute = () => {
+  // Stable Win Handler
+  const handleGameWin = useCallback((time: number, deaths: number) => {
+    handleLevelWin(currentLevel, time, deaths);
+  }, [handleLevelWin, currentLevel]);
+
+  // Settings Handlers
+  const handleToggleMute = useCallback(() => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
     sounds.setMuted(nextMuted);
-  };
+    if (!nextMuted && !isBgmPlaying) {
+      sounds.startBgm();
+      setIsBgmPlaying(true);
+    }
+  }, [isMuted, isBgmPlaying]);
 
-  const handleToggleBgm = () => {
+  const handleToggleBgm = useCallback(() => {
     if (isBgmPlaying) {
       sounds.stopBgm();
       setIsBgmPlaying(false);
@@ -372,7 +364,7 @@ export default function App() {
       sounds.startBgm();
       setIsBgmPlaying(true);
     }
-  };
+  }, [isBgmPlaying]);
 
   const handleSfxVolume = (vol: number) => {
     setSfxVolume(vol);
@@ -439,144 +431,250 @@ export default function App() {
         localStorage.setItem(CUSTOM_LEVELS_STORAGE_KEY, JSON.stringify(nextLevels));
       } catch {}
     }
-    if (currentLevel.id === levelId) {
-      setCurrentLevelIndex(0);
+    if (currentLevelIndex >= nextLevels.length) {
+      setCurrentLevelIndex(Math.max(0, nextLevels.length - 1));
     }
   };
 
-  // Speedrun stats calculation
-  const totalSpeedrunTime = (Object.values(records) as LevelRecord[]).reduce((acc, r) => acc + (r?.bestTime || 0), 0);
-
-  // Handle Telegram Share from Victory Modal
-  const handleShareVictoryTelegram = () => {
-    if (!victoryData) return;
-    shareScoreToTelegram({
-      levelName: victoryData.level.name,
-      levelId: victoryData.level.id,
-      timeStr: formatHundredths(victoryData.time),
-      deaths: victoryData.deaths,
-    });
+  // Playtest a level directly from editor
+  const handlePlaytest = (levelToPlay: LevelData) => {
+    let targetIdx = levels.findIndex((l) => l.id === levelToPlay.id);
+    if (targetIdx === -1) {
+      // Temporarily append for testing
+      const newLevels = [...levels, levelToPlay];
+      setLevels(newLevels);
+      targetIdx = newLevels.length - 1;
+    } else {
+      // Update in place
+      const updated = [...levels];
+      updated[targetIdx] = levelToPlay;
+      setLevels(updated);
+    }
+    setCurrentLevelIndex(targetIdx);
+    setShowEditor(false);
+    handleQuickRestart();
   };
+
+  const handleSelectLevel = useCallback((target: LevelData | number) => {
+    const id = typeof target === 'number' ? target : target.id;
+    const idx = levels.findIndex((l) => l.id === id);
+    if (idx !== -1) {
+      setCurrentLevelIndex(idx);
+      handleQuickRestart();
+    }
+    setShowLevelSelect(false);
+    setShowLeaderboard(false);
+  }, [levels, handleQuickRestart]);
+
+  const activeScreen = useMemo<'game' | 'levels' | 'leaderboard' | 'editor' | 'settings'>(() => {
+    if (showEditor) return 'editor';
+    if (showLevelSelect) return 'levels';
+    if (showLeaderboard) return 'leaderboard';
+    if (showSettings) return 'settings';
+    return 'game';
+  }, [showEditor, showLevelSelect, showLeaderboard, showSettings]);
+
+  const handleNavigate = useCallback((screen: 'game' | 'levels' | 'leaderboard' | 'editor' | 'settings') => {
+    if (screen === 'game') {
+      setShowLevelSelect(false);
+      setShowLeaderboard(false);
+      setShowEditor(false);
+      setShowSettings(false);
+      setShowEmbedDrawer(false);
+      setIsPaused(false);
+    } else if (screen === 'levels') {
+      setShowLeaderboard(false);
+      setShowEditor(false);
+      setShowSettings(false);
+      setShowEmbedDrawer(false);
+      setShowLevelSelect((prev) => !prev);
+    } else if (screen === 'leaderboard') {
+      setShowLevelSelect(false);
+      setShowEditor(false);
+      setShowSettings(false);
+      setShowEmbedDrawer(false);
+      setShowLeaderboard((prev) => !prev);
+    } else if (screen === 'editor') {
+      setShowLevelSelect(false);
+      setShowLeaderboard(false);
+      setShowSettings(false);
+      setShowEmbedDrawer(false);
+      setShowEditor((prev) => !prev);
+    } else if (screen === 'settings') {
+      setShowLevelSelect(false);
+      setShowLeaderboard(false);
+      setShowEditor(false);
+      setShowEmbedDrawer(false);
+      setShowSettings((prev) => !prev);
+    }
+  }, []);
 
   return (
     <main 
-      id="app-root-container"
-      className="w-full h-[100dvh] flex flex-col justify-between bg-zinc-950 text-zinc-100 overflow-hidden font-mono select-none"
+      id="app-container"
+      className="relative flex flex-col h-screen h-[100dvh] w-screen max-w-full overflow-hidden bg-zinc-950 select-none touch-none"
     >
-      {/* Friend Challenge Notice Banner */}
+      {/* SCANLINES OVERLAY */}
+      {scanlines && (
+        <div 
+          id="scanlines-layer"
+          className="pointer-events-none absolute inset-0 z-40 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.4)_50%)] bg-[length:100%_4px] opacity-30" 
+        />
+      )}
+
+      {/* FRIEND CHALLENGE BANNER (Telegram link) */}
       {challengeBanner && (
-        <div className="bg-gradient-to-r from-sky-950 via-sky-900 to-indigo-950 border-b border-sky-600/50 px-3 py-1.5 flex items-center justify-between text-xs text-sky-200 z-30 shadow-md">
+        <div 
+          id="challenge-banner"
+          className="z-40 flex items-center justify-between px-3 py-1.5 bg-gradient-to-r from-amber-950/90 via-amber-900/90 to-amber-950/90 border-b border-amber-500/50 text-amber-200 text-xs font-mono shadow-md shrink-0"
+        >
           <div className="flex items-center gap-2">
             <Swords className="w-4 h-4 text-amber-400 animate-pulse" />
             <span>
-              🔥 <strong>Вызов от друга!</strong> Рекорд для побития: <span className="text-amber-300 font-bold underline">{challengeBanner}</span>
+              ВЫЗОВ ОТ ДРУГА: <strong className="text-amber-300 font-bold">{challengeBanner}s</strong> на Уровне {currentLevel.id}! Побей рекорд!
             </span>
           </div>
-          <button
+          <button 
+            type="button"
             onClick={() => setChallengeBanner(null)}
-            className="p-1 rounded text-sky-300 hover:text-white transition cursor-pointer"
+            className="p-1 hover:bg-amber-800/40 rounded text-amber-400 cursor-pointer"
           >
             <CloseIcon className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-      {/* Top HUD */}
+      {/* TOP HUD BAR */}
       <HUD
         level={currentLevel}
         player={hudPlayer}
         levelTime={hudTime}
+        time={hudTime}
         deaths={hudDeaths}
+        lifetimeDeaths={lifetimeDeaths}
         totalLifetimeDeaths={lifetimeDeaths}
         bestTime={records[currentLevel.id]?.bestTime}
         theme={currentTheme}
         isPaused={isPaused}
         isMuted={isMuted}
         isBgmPlaying={isBgmPlaying}
-        compact={isCompact}
-        isCreatorMode={isCreatorMode}
-        onRestart={handleRestart}
+        onRestart={handleQuickRestart}
         onTogglePause={() => setIsPaused((prev) => !prev)}
         onToggleMute={handleToggleMute}
         onToggleBgm={handleToggleBgm}
         onOpenLevelSelect={() => setShowLevelSelect(true)}
-        onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onOpenLevels={() => setShowLevelSelect(true)}
         onOpenSettings={() => setShowSettings(true)}
-        onOpenEmbed={() => setShowEmbedDrawer(true)}
         onOpenEditor={() => setShowEditor(true)}
+        onOpenEmbed={() => setShowEmbedDrawer(true)}
+        onOpenLeaderboard={() => setShowLeaderboard(true)}
       />
 
-      {/* Main Game Canvas Viewport */}
-      <GameCanvas
-        key={`game-canvas-${currentLevel.id}`}
-        level={currentLevel}
-        theme={currentTheme}
-        scanlines={scanlines}
-        screenShakeEnabled={screenShakeEnabled}
-        touchMode={touchMode}
-        isPaused={isPaused}
-        restartSignal={restartSignal}
-        onUpdateHUD={handleUpdateHUD}
-        onLevelComplete={handleLevelComplete}
-        onPlayerDeath={handlePlayerDeath}
-      />
+      {/* MAIN GAME STAGE CANVAS */}
+      <section 
+        id="game-viewport-section"
+        className="relative flex-1 w-full flex items-center justify-center min-h-0 overflow-hidden bg-zinc-950"
+      >
+        <GameCanvas
+          level={currentLevel}
+          theme={currentTheme}
+          scanlines={scanlines}
+          screenShakeEnabled={screenShakeEnabled}
+          touchMode={touchMode}
+          restartSignal={restartSignal}
+          isPaused={isPaused || showLevelSelect || showSettings || showEditor || showEmbedDrawer || showLeaderboard || Boolean(victoryData)}
+          onDeath={incrementLifetimeDeaths}
+          onWin={handleGameWin}
+          onHudUpdate={handleHudUpdate}
+          onQuickRestart={handleQuickRestart}
+        />
+      </section>
 
-      {/* Bottom Navigation Bar */}
+      {/* BOTTOM COMPACT NAVIGATION BAR */}
       <NavigationBar
-        activeScreen={activeNavScreen}
-        onNavigate={handleBottomNav}
+        activeScreen={activeScreen}
+        onNavigate={handleNavigate}
         isCreatorMode={isCreatorMode}
+        currentLevel={currentLevel}
+        totalLevels={levels.length}
+        onOpenLevels={() => setShowLevelSelect(true)}
+        onOpenLeaderboard={() => setShowLeaderboard(true)}
+        onOpenEditor={() => setShowEditor(true)}
+        onOpenSettings={() => setShowSettings(true)}
+        onQuickRestart={handleQuickRestart}
       />
 
-      {/* Modals */}
+      {/* MODALS */}
+      {/* 1. Level Select Modal */}
       {showLevelSelect && (
         <LevelSelectModal
           levels={levels}
           currentLevelId={currentLevel.id}
           records={records}
+          theme={currentTheme}
           isCreatorMode={isCreatorMode}
           onSelectLevel={handleSelectLevel}
           onDeleteLevel={handleDeleteLevel}
-          onOpenEditor={() => setShowEditor(true)}
-          onOpenLeaderboard={() => setShowLeaderboard(true)}
+          onOpenEditor={() => {
+            setShowLevelSelect(false);
+            setShowEditor(true);
+          }}
+          onOpenLeaderboard={() => {
+            setShowLevelSelect(false);
+            setShowLeaderboard(true);
+          }}
           onClose={() => setShowLevelSelect(false)}
         />
       )}
 
-      {/* Online Leaderboard Modal */}
+      {/* 2. Global & Level Leaderboard Modal */}
       {showLeaderboard && (
         <LeaderboardModal
-          levels={levels}
           currentLevelId={currentLevel.id}
-          telegramUser={tgUser}
+          levels={levels}
+          theme={currentTheme}
+          localRecords={records}
           playerName={playerName}
+          telegramUser={tgUser}
+          tgUser={tgUser}
           onUpdatePlayerName={handleUpdatePlayerName}
           onSelectLevel={handleSelectLevel}
           onClose={() => setShowLeaderboard(false)}
         />
       )}
 
+      {/* 3. Settings Modal */}
       {showSettings && (
         <SettingsModal
           currentTheme={themeName}
-          scanlines={scanlines}
-          screenShake={screenShakeEnabled}
-          touchControlsMode={touchMode}
-          sfxVolume={sfxVolume}
-          bgmVolume={bgmVolume}
-          isBgmPlaying={isBgmPlaying}
+          themeName={themeName}
           onSelectTheme={setThemeName}
-          onToggleScanlines={setScanlines}
-          onToggleScreenShake={setScreenShakeEnabled}
+          scanlines={scanlines}
+          onToggleScanlines={() => setScanlines((v) => !v)}
+          screenShake={screenShakeEnabled}
+          onToggleScreenShake={() => setScreenShakeEnabled((v) => !v)}
+          touchControlsMode={touchMode}
+          touchMode={touchMode}
           onChangeTouchMode={setTouchMode}
-          onChangeSfxVolume={handleSfxVolume}
-          onChangeBgmVolume={handleBgmVolume}
+          onSelectTouchMode={setTouchMode}
+          isMuted={isMuted}
+          isBgmPlaying={isBgmPlaying}
+          onToggleMute={handleToggleMute}
           onToggleBgm={handleToggleBgm}
+          sfxVolume={sfxVolume}
+          onChangeSfxVolume={handleSfxVolume}
+          bgmVolume={bgmVolume}
+          onChangeBgmVolume={handleBgmVolume}
+          playerName={playerName}
+          onChangePlayerName={handleUpdatePlayerName}
+          isCreatorMode={isCreatorMode}
+          onToggleCreatorMode={handleToggleCreatorMode}
           onResetProgress={handleResetProgress}
           onClose={() => setShowSettings(false)}
         />
       )}
 
+      {/* 4. Level Editor & Custom Map Creator */}
       {showEditor && (
         <LevelEditor
           levels={levels}
@@ -587,42 +685,43 @@ export default function App() {
           onSaveLevel={handleSaveLevel}
           onResetLevel={handleResetLevel}
           onDeleteLevel={handleDeleteLevel}
-          onPlaytest={(customLevel) => {
-            setShowEditor(false);
-            handleSelectLevel(customLevel);
-          }}
+          onPlaytest={handlePlaytest}
           onClose={() => setShowEditor(false)}
         />
       )}
 
+      {/* 5. Embed Drawer (Iframe / Widget Generator) */}
       {showEmbedDrawer && (
         <EmbedDrawer
-          currentTheme={themeName}
           currentLevelId={currentLevel.id}
+          themeName={themeName}
           onClose={() => setShowEmbedDrawer(false)}
         />
       )}
 
+      {/* 6. Victory & Rank Medal Modal */}
       {victoryData && (
         <VictoryModal
-          level={victoryData.level}
-          levelTime={victoryData.time}
-          deaths={victoryData.deaths}
-          isAllCompleted={victoryData.isAllCompleted}
-          totalSpeedrunTime={totalSpeedrunTime}
-          totalDeaths={lifetimeDeaths}
-          rankSubmitted={victoryData.rank}
+          data={victoryData}
+          theme={currentTheme}
           onNextLevel={handleNextLevel}
-          onReplay={handleRestart}
-          onOpenLevelSelect={() => {
+          onRetryLevel={() => {
             setVictoryData(null);
-            setShowLevelSelect(true);
+            handleQuickRestart();
           }}
           onOpenLeaderboard={() => {
             setVictoryData(null);
             setShowLeaderboard(true);
           }}
-          onShareTelegram={handleShareVictoryTelegram}
+          onShareToTelegram={() => {
+            shareScoreToTelegram({
+              levelName: victoryData.level.name,
+              levelId: victoryData.level.id,
+              timeStr: formatHundredths(victoryData.time),
+              deaths: victoryData.deaths,
+            });
+          }}
+          onClose={() => setVictoryData(null)}
         />
       )}
     </main>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Trophy, 
   X, 
@@ -25,9 +25,12 @@ import { shareScoreToTelegram, copyToClipboard, haptics, TelegramUserData } from
 interface LeaderboardModalProps {
   levels: LevelData[];
   currentLevelId: number;
-  telegramUser: TelegramUserData;
+  telegramUser?: TelegramUserData;
+  tgUser?: TelegramUserData;
+  theme?: any;
+  localRecords?: any;
   playerName: string;
-  onUpdatePlayerName: (newName: string) => void;
+  onUpdatePlayerName?: (newName: string) => void;
   onClose: () => void;
   onSelectLevel?: (level: LevelData) => void;
 }
@@ -36,11 +39,13 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
   levels,
   currentLevelId,
   telegramUser,
+  tgUser,
   playerName,
   onUpdatePlayerName,
   onClose,
   onSelectLevel,
 }) => {
+  const activeTgUser = telegramUser || tgUser || { isTelegram: false };
   const [activeTab, setActiveTab] = useState<'level' | 'global' | 'telegram'>('level');
   const [selectedLevelId, setSelectedLevelId] = useState<number>(currentLevelId);
   
@@ -54,32 +59,47 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
 
   const selectedLevel = levels.find((l) => l.id === selectedLevelId) || levels[0];
 
-  // Load Leaderboard Data
-  const loadLeaderboard = async () => {
-    setIsLoading(true);
-    try {
-      if (activeTab === 'level') {
-        const data = await fetchLevelLeaderboard(selectedLevelId);
-        setLevelEntries(data);
-      } else if (activeTab === 'global') {
-        const data = await fetchGlobalLeaderboard();
-        setGlobalEntries(data);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const [refreshKey, setRefreshKey] = useState<number>(0);
+  const loadLeaderboard = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+  }, []);
 
+  // Load Leaderboard Data
   useEffect(() => {
-    loadLeaderboard();
-  }, [activeTab, selectedLevelId]);
+    let isSubscribed = true;
+    setIsLoading(true);
+
+    const run = async () => {
+      try {
+        if (activeTab === 'level') {
+          const data = await fetchLevelLeaderboard(selectedLevelId);
+          if (isSubscribed) setLevelEntries(data);
+        } else if (activeTab === 'global' || activeTab === 'telegram') {
+          const data = await fetchGlobalLeaderboard();
+          if (isSubscribed) setGlobalEntries(data);
+        }
+      } catch (err) {
+        console.error('Failed to load leaderboard', err);
+      } finally {
+        if (isSubscribed) setIsLoading(false);
+      }
+    };
+
+    run();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [activeTab, selectedLevelId, refreshKey]);
 
   // Save custom nickname
   const handleSaveName = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const clean = nameInput.trim().slice(0, 24);
     if (clean) {
-      onUpdatePlayerName(clean);
+      if (typeof onUpdatePlayerName === 'function') {
+        onUpdatePlayerName(clean);
+      }
       setIsEditingName(false);
       haptics.success();
     }
@@ -89,7 +109,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
   const handleShareChallenge = () => {
     haptics.medium();
     const currentBest = levelEntries.find(
-      (e) => String(e.tgId || e.username || e.playerName).toLowerCase() === String(telegramUser.id || telegramUser.username || playerName).toLowerCase()
+      (e) => String(e.tgId || e.username || e.playerName).toLowerCase() === String(activeTgUser.id || activeTgUser.username || playerName).toLowerCase()
     );
     const timeStr = currentBest ? formatHundredths(currentBest.time) : '00:10.00';
     const deaths = currentBest ? currentBest.deaths : 0;
@@ -191,10 +211,10 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
               >
                 <User className="w-3 h-3 text-cyan-400" />
                 <span>{playerName}</span>
-                {telegramUser.username && (
-                  <span className="text-[10px] text-cyan-400">(@{telegramUser.username})</span>
+                {activeTgUser.username && (
+                  <span className="text-[10px] text-cyan-400">(@{activeTgUser.username})</span>
                 )}
-                {telegramUser.isTelegram && (
+                {activeTgUser.isTelegram && (
                   <span className="text-[9px] px-1 py-0.2 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
                     TG
                   </span>
@@ -344,7 +364,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                         const isTop2 = rankNum === 2;
                         const isTop3 = rankNum === 3;
                         const isMe = String(entry.tgId || entry.username || entry.playerName).toLowerCase() === 
-                          String(telegramUser.id || telegramUser.username || playerName).toLowerCase();
+                          String(activeTgUser.id || activeTgUser.username || playerName).toLowerCase();
 
                         return (
                           <tr
@@ -464,7 +484,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
                         const isTop2 = rankNum === 2;
                         const isTop3 = rankNum === 3;
                         const isMe = String(entry.tgId || entry.username || entry.playerName).toLowerCase() === 
-                          String(telegramUser.id || telegramUser.username || playerName).toLowerCase();
+                          String(activeTgUser.id || activeTgUser.username || playerName).toLowerCase();
 
                         return (
                           <tr

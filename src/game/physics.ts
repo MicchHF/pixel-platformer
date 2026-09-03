@@ -7,6 +7,7 @@ import {
   Particle, 
   PlayerState, 
   Rect, 
+  SeekerEnemy, 
   TimedLaser 
 } from '../types/game';
 import { PHYSICS, TILES, TILE_SIZE } from './constants';
@@ -18,6 +19,7 @@ export interface GameEngineState {
   initialGrid: number[][];
   saws: MovingSaw[];
   lasers: TimedLaser[];
+  seekers: SeekerEnemy[];
   crumbles: Map<string, CrumbleBlock>;
   crystals: Map<string, DashCrystal>;
   particles: Particle[];
@@ -45,6 +47,7 @@ export function initLevelState(rawLevel: LevelData): GameEngineState {
     grid: rawLevel.grid.map((row) => [...row]),
     saws: rawLevel.saws ? JSON.parse(JSON.stringify(rawLevel.saws)) : undefined,
     lasers: rawLevel.lasers ? JSON.parse(JSON.stringify(rawLevel.lasers)) : undefined,
+    seekers: rawLevel.seekers ? JSON.parse(JSON.stringify(rawLevel.seekers)) : undefined,
   };
 
   // Parse grid for spawn, goal, crumbles, crystals
@@ -107,6 +110,25 @@ export function initLevelState(rawLevel: LevelData): GameEngineState {
     phaseOffset: l.phaseOffset || 0,
   }));
 
+  // Setup seekers (flying chaser enemies)
+  const seekers: SeekerEnemy[] = (level.seekers || []).map((s, idx) => ({
+    id: `seeker_${idx}`,
+    x: s.x,
+    y: s.y,
+    startX: s.x,
+    startY: s.y,
+    vx: 0,
+    vy: 0,
+    speed: s.speed || 38,
+    radius: 9,
+    state: 'seeking',
+    knockbackTimer: 0,
+    stunTimer: 0,
+    angle: 0,
+    eyeAngle: 0,
+    pulse: 0,
+  }));
+
   const player: PlayerState = {
     x: spawnX,
     y: spawnY,
@@ -138,6 +160,7 @@ export function initLevelState(rawLevel: LevelData): GameEngineState {
     initialGrid,
     saws,
     lasers,
+    seekers,
     crumbles,
     crystals,
     particles: [],
@@ -197,6 +220,20 @@ export function respawnPlayer(state: GameEngineState) {
     saw.progress = 0;
     saw.direction = 1;
     saw.angle = 0;
+  });
+
+  // Reset seeker enemies
+  state.seekers.forEach((seeker) => {
+    seeker.x = seeker.startX;
+    seeker.y = seeker.startY;
+    seeker.vx = 0;
+    seeker.vy = 0;
+    seeker.state = 'seeking';
+    seeker.knockbackTimer = 0;
+    seeker.stunTimer = 0;
+    seeker.angle = 0;
+    seeker.eyeAngle = 0;
+    seeker.pulse = 0;
   });
 
   // Clear transient particles
@@ -307,7 +344,123 @@ export function updatePhysics(
     }
   });
 
-  // 4. Update Timers (Coyote, Jump Buffer, Dash Cooldown)
+  // 4. Update Seeker Enemies (Flying Chasers)
+  const minBoundX = 14;
+  const maxBoundX = state.level.cols * TILE_SIZE - 14;
+  const minBoundY = 14;
+  const maxBoundY = state.level.rows * TILE_SIZE - 14;
+
+  state.seekers.forEach((seeker) => {
+    seeker.pulse += fixedDt * 6;
+    const px = p.x + p.w / 2;
+    const py = p.y + p.h / 2;
+    const dx = px - seeker.x;
+    const dy = py - seeker.y;
+    const distToPlayer = Math.hypot(dx, dy);
+
+    if (seeker.state === 'seeking') {
+      if (distToPlayer > 0.1) {
+        seeker.eyeAngle = Math.atan2(dy, dx);
+        const targetVx = (dx / distToPlayer) * seeker.speed;
+        const targetVy = (dy / distToPlayer) * seeker.speed;
+        seeker.vx += (targetVx - seeker.vx) * fixedDt * 3.5;
+        seeker.vy += (targetVy - seeker.vy) * fixedDt * 3.5;
+      }
+      seeker.x += seeker.vx * fixedDt;
+      seeker.y += seeker.vy * fixedDt;
+
+      // Soft arena clamp
+      seeker.x = Math.max(minBoundX, Math.min(maxBoundX, seeker.x));
+      seeker.y = Math.max(minBoundY, Math.min(maxBoundY, seeker.y));
+
+      // Thruster micro-particles
+      if (Math.random() < 0.25) {
+        state.particles.push({
+          x: seeker.x - Math.cos(seeker.eyeAngle) * 7,
+          y: seeker.y - Math.sin(seeker.eyeAngle) * 7,
+          vx: -Math.cos(seeker.eyeAngle) * (25 + Math.random() * 20),
+          vy: -Math.sin(seeker.eyeAngle) * (25 + Math.random() * 20),
+          color: '#f43f5e',
+          size: 1.5,
+          alpha: 0.8,
+          life: 0.2,
+          maxLife: 0.2,
+          type: 'spark',
+        });
+      }
+    } else if (seeker.state === 'knocked_back') {
+      seeker.knockbackTimer -= fixedDt;
+      seeker.x += seeker.vx * fixedDt;
+      seeker.y += seeker.vy * fixedDt;
+      seeker.angle += fixedDt * 22;
+
+      // Sparkling trail during knockback
+      state.particles.push({
+        x: seeker.x + (Math.random() - 0.5) * 8,
+        y: seeker.y + (Math.random() - 0.5) * 8,
+        vx: (Math.random() - 0.5) * 50,
+        vy: (Math.random() - 0.5) * 50,
+        color: '#38bdf8',
+        size: 2,
+        alpha: 0.9,
+        life: 0.25,
+        maxLife: 0.25,
+        type: 'spark',
+      });
+
+      // Check hit arena / map boundary
+      let hitEdge = false;
+      if (seeker.x <= minBoundX) {
+        seeker.x = minBoundX;
+        seeker.vx = Math.abs(seeker.vx) * 0.2;
+        hitEdge = true;
+      } else if (seeker.x >= maxBoundX) {
+        seeker.x = maxBoundX;
+        seeker.vx = -Math.abs(seeker.vx) * 0.2;
+        hitEdge = true;
+      }
+      if (seeker.y <= minBoundY) {
+        seeker.y = minBoundY;
+        seeker.vy = Math.abs(seeker.vy) * 0.2;
+        hitEdge = true;
+      } else if (seeker.y >= maxBoundY) {
+        seeker.y = maxBoundY;
+        seeker.vy = -Math.abs(seeker.vy) * 0.2;
+        hitEdge = true;
+      }
+
+      if (hitEdge || seeker.knockbackTimer <= 0) {
+        seeker.state = 'stunned';
+        seeker.stunTimer = 1.3; // Stunned at the edge of the map
+        seeker.vx = 0;
+        seeker.vy = 0;
+        // Edge shockwave sparks
+        for (let i = 0; i < 12; i++) {
+          state.particles.push({
+            x: seeker.x,
+            y: seeker.y,
+            vx: (Math.random() - 0.5) * 120,
+            vy: (Math.random() - 0.5) * 120,
+            color: '#fb7185',
+            size: 2.5,
+            alpha: 1,
+            life: 0.35,
+            maxLife: 0.35,
+            type: 'spark',
+          });
+        }
+      }
+    } else if (seeker.state === 'stunned') {
+      seeker.stunTimer -= fixedDt;
+      seeker.angle = Math.sin(state.levelTime * 20) * 0.25;
+      if (seeker.stunTimer <= 0) {
+        seeker.state = 'seeking';
+        seeker.angle = 0;
+      }
+    }
+  });
+
+  // 5. Update Timers (Coyote, Jump Buffer, Dash Cooldown)
   if (p.isGrounded) {
     p.coyoteTimer = PHYSICS.COYOTE_TIME;
     p.hasDash = true;
@@ -806,6 +959,77 @@ function checkInteractions(state: GameEngineState, onDeath: () => void, onWin: (
         : { x: laser.gridX * TILE_SIZE + 6, y: laser.gridY * TILE_SIZE, w: 4, h: laser.length * TILE_SIZE };
 
       if (rectOverlap(playerBox, laserBox)) {
+        triggerDeath(state, onDeath);
+        return;
+      }
+    }
+  }
+
+  // Check Seeker Enemies (Slow homing drones)
+  for (const seeker of state.seekers) {
+    const dist = Math.hypot(p.x + p.w / 2 - seeker.x, p.y + p.h / 2 - seeker.y);
+    const hitDist = seeker.radius + p.w / 2 + (p.isDashing ? 6 : 0);
+
+    if (dist < hitDist) {
+      if (p.isDashing) {
+        // DASH ATTACK! Knock seeker back to edge of the map + refresh player dash
+        let dirX = p.dashDirX;
+        let dirY = p.dashDirY;
+        if (dirX === 0 && dirY === 0) {
+          dirX = seeker.x - (p.x + p.w / 2);
+          dirY = seeker.y - (p.y + p.h / 2);
+        }
+        const mag = Math.hypot(dirX, dirY) || 1;
+        const normX = dirX / mag;
+        const normY = dirY / mag;
+
+        seeker.state = 'knocked_back';
+        seeker.knockbackTimer = 1.0;
+        seeker.vx = normX * 880;
+        seeker.vy = normY * 880;
+
+        // Celeste-style dash & jump replenishment on enemy dash strike
+        p.hasDash = true;
+        p.hasAirJump = true;
+        p.coyoteTimer = PHYSICS.COYOTE_TIME;
+
+        sounds.playEnemyHit();
+        state.screenShake = 8;
+
+        // Shockwave ring
+        state.particles.push({
+          x: seeker.x,
+          y: seeker.y,
+          vx: 0,
+          vy: 0,
+          color: '#38bdf8',
+          size: 5,
+          alpha: 1,
+          life: 0.35,
+          maxLife: 0.35,
+          type: 'ring',
+        });
+
+        // Sparks
+        for (let i = 0; i < 16; i++) {
+          const a = (Math.PI * 2 * i) / 16 + (Math.random() - 0.5) * 0.4;
+          const spd = 90 + Math.random() * 130;
+          state.particles.push({
+            x: seeker.x,
+            y: seeker.y,
+            vx: Math.cos(a) * spd,
+            vy: Math.sin(a) * spd,
+            color: ['#38bdf8', '#fbbf24', '#ffffff', '#f43f5e'][Math.floor(Math.random() * 4)],
+            size: Math.random() * 3 + 2,
+            alpha: 1,
+            life: 0.35,
+            maxLife: 0.35,
+            type: 'spark',
+          });
+        }
+        break;
+      } else if (seeker.state === 'seeking') {
+        // Player touched deadly seeker without dashing
         triggerDeath(state, onDeath);
         return;
       }

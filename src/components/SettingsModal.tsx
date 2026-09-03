@@ -6,43 +6,74 @@ import { sounds } from '../audio/soundManager';
 import { toggleAppFullscreen, haptics } from '../utils/telegram';
 
 interface SettingsModalProps {
-  currentTheme: ThemeName;
+  currentTheme?: ThemeName;
+  themeName?: ThemeName;
   scanlines: boolean;
   screenShake: boolean;
-  touchControlsMode: 'auto' | 'always' | 'hidden';
+  touchControlsMode?: 'auto' | 'always' | 'hidden';
+  touchMode?: 'auto' | 'always' | 'hidden';
   sfxVolume: number;
   bgmVolume: number;
-  isBgmPlaying: boolean;
+  isBgmPlaying?: boolean;
+  isMuted?: boolean;
+  playerName?: string;
+  onChangePlayerName?: (name: string) => void;
+  isCreatorMode?: boolean;
+  onToggleCreatorMode?: (enabled: boolean) => void;
   onSelectTheme: (theme: ThemeName) => void;
   onToggleScanlines: (enabled: boolean) => void;
   onToggleScreenShake: (enabled: boolean) => void;
-  onChangeTouchMode: (mode: 'auto' | 'always' | 'hidden') => void;
+  onChangeTouchMode?: (mode: 'auto' | 'always' | 'hidden') => void;
+  onSelectTouchMode?: (mode: 'auto' | 'always' | 'hidden') => void;
   onChangeSfxVolume: (vol: number) => void;
   onChangeBgmVolume: (vol: number) => void;
-  onToggleBgm: () => void;
+  onToggleBgm?: () => void;
+  onToggleMute?: () => void;
   onResetProgress: () => void;
   onClose: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentTheme,
+  themeName,
   scanlines,
   screenShake,
   touchControlsMode,
+  touchMode,
   sfxVolume,
   bgmVolume,
-  isBgmPlaying,
+  isBgmPlaying = false,
+  isMuted = false,
+  playerName,
+  onChangePlayerName,
+  isCreatorMode = false,
+  onToggleCreatorMode,
   onSelectTheme,
   onToggleScanlines,
   onToggleScreenShake,
   onChangeTouchMode,
+  onSelectTouchMode,
   onChangeSfxVolume,
   onChangeBgmVolume,
   onToggleBgm,
+  onToggleMute,
   onResetProgress,
   onClose,
 }) => {
   const [confirmReset, setConfirmReset] = useState(false);
+  const activeTheme = currentTheme || themeName || 'synthwave';
+  const activeTouchMode = touchControlsMode || touchMode || 'auto';
+  const musicActive = isBgmPlaying && !isMuted;
+
+  const handleTouchModeChange = (mode: 'auto' | 'always' | 'hidden') => {
+    if (typeof onChangeTouchMode === 'function') onChangeTouchMode(mode);
+    if (typeof onSelectTouchMode === 'function') onSelectTouchMode(mode);
+  };
+
+  const handleToggleMusic = () => {
+    if (typeof onToggleBgm === 'function') onToggleBgm();
+    else if (typeof onToggleMute === 'function') onToggleMute();
+  };
   return (
     <div 
       id="settings-modal-overlay"
@@ -81,7 +112,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
               {(Object.keys(THEMES) as ThemeName[]).map((themeKey) => {
                 const t = THEMES[themeKey];
-                const isSelected = currentTheme === themeKey;
+                const isSelected = activeTheme === themeKey;
                 return (
                   <button
                     key={themeKey}
@@ -169,11 +200,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-2">
                 <div className="flex items-center justify-between text-xs text-zinc-300">
                   <button
-                    onClick={onToggleBgm}
+                    onClick={handleToggleMusic}
                     className="flex items-center gap-1.5 font-semibold text-zinc-200 hover:text-cyan-400 transition cursor-pointer"
                   >
                     <Music className="w-4 h-4 text-indigo-400" /> 
-                    <span>Музыка Synthwave {isBgmPlaying ? '(Вкл)' : '(Выкл)'}</span>
+                    <span>Музыка Synthwave {musicActive ? '(Вкл)' : '(Выкл)'}</span>
                   </button>
                   <span>{Math.round(bgmVolume * 100)}%</span>
                 </div>
@@ -227,9 +258,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               ].map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => onChangeTouchMode(item.id as 'auto' | 'always' | 'hidden')}
+                  onClick={() => handleTouchModeChange(item.id as 'auto' | 'always' | 'hidden')}
                   className={`py-2 px-3 rounded-lg border text-xs font-medium transition cursor-pointer ${
-                    touchControlsMode === item.id
+                    activeTouchMode === item.id
                       ? 'bg-cyan-950/80 border-cyan-500 text-cyan-300'
                       : 'bg-zinc-950/60 border-zinc-800 text-zinc-400 hover:text-zinc-200'
                   }`}

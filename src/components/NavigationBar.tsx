@@ -1,21 +1,54 @@
 import React from 'react';
 import { Gamepad2, Grid, Trophy, Edit3, Settings } from 'lucide-react';
 import { haptics } from '../utils/telegram';
+import { LevelData } from '../types/game';
 
-interface NavigationBarProps {
-  activeScreen: 'game' | 'levels' | 'leaderboard' | 'editor' | 'settings';
-  onNavigate: (screen: 'game' | 'levels' | 'leaderboard' | 'editor' | 'settings') => void;
+export type NavigationScreen = 'game' | 'levels' | 'leaderboard' | 'editor' | 'settings';
+
+export interface NavigationBarProps {
+  activeScreen?: NavigationScreen;
+  onNavigate?: (screen: NavigationScreen) => void;
   isCreatorMode?: boolean;
+  currentLevel?: LevelData;
+  totalLevels?: number;
+  onOpenLevels?: () => void;
+  onOpenLeaderboard?: () => void;
+  onOpenEditor?: () => void;
+  onOpenSettings?: () => void;
+  onQuickRestart?: () => void;
 }
 
 export const NavigationBar: React.FC<NavigationBarProps> = ({
-  activeScreen,
+  activeScreen = 'game',
   onNavigate,
   isCreatorMode = false,
+  onOpenLevels,
+  onOpenLeaderboard,
+  onOpenEditor,
+  onOpenSettings,
+  onQuickRestart,
 }) => {
-  const handleNav = (screen: 'game' | 'levels' | 'leaderboard' | 'editor' | 'settings') => {
+  const handleNav = (screen: NavigationScreen) => {
     haptics.selection();
-    onNavigate(screen);
+    if (typeof onNavigate === 'function') {
+      try {
+        onNavigate(screen);
+      } catch (err) {
+        console.error('Error during onNavigate:', err);
+      }
+    }
+
+    if (screen === 'levels' && typeof onOpenLevels === 'function') {
+      onOpenLevels();
+    } else if (screen === 'leaderboard' && typeof onOpenLeaderboard === 'function') {
+      onOpenLeaderboard();
+    } else if (screen === 'editor' && typeof onOpenEditor === 'function') {
+      onOpenEditor();
+    } else if (screen === 'settings' && typeof onOpenSettings === 'function') {
+      onOpenSettings();
+    } else if (screen === 'game' && typeof onQuickRestart === 'function') {
+      onQuickRestart();
+    }
   };
 
   const navItems = [

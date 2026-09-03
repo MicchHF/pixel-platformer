@@ -14,30 +14,77 @@ import { haptics } from '../utils/telegram';
 interface GameCanvasProps {
   level: LevelData;
   theme: ThemeColors;
-  scanlines: boolean;
-  screenShakeEnabled: boolean;
-  touchMode: 'auto' | 'always' | 'hidden';
-  isPaused: boolean;
+  scanlines?: boolean;
+  screenShakeEnabled?: boolean;
+  touchMode?: 'auto' | 'always' | 'hidden';
+  isPaused?: boolean;
   restartSignal?: number;
-  onUpdateHUD: (player: GameEngineState['player'], time: number, deaths: number) => void;
-  onLevelComplete: (levelId: number, time: number, deaths: number) => void;
-  onPlayerDeath: (levelId: number, totalDeaths: number) => void;
+  onUpdateHUD?: (player: GameEngineState['player'], time: number, deaths: number) => void;
+  onHudUpdate?: (player: GameEngineState['player'], time: number, deaths: number) => void;
+  onLevelComplete?: (levelId: number, time: number, deaths: number) => void;
+  onWin?: (time: number, deaths: number) => void;
+  onPlayerDeath?: (levelId: number, totalDeaths: number) => void;
+  onDeath?: () => void;
+  onQuickRestart?: () => void;
 }
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({
+const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   level,
   theme,
-  scanlines,
-  screenShakeEnabled,
-  touchMode,
-  isPaused,
+  scanlines = false,
+  screenShakeEnabled = true,
+  touchMode = 'auto',
+  isPaused = false,
   restartSignal = 0,
   onUpdateHUD,
+  onHudUpdate,
   onLevelComplete,
+  onWin,
   onPlayerDeath,
+  onDeath,
+  onQuickRestart,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const callbacksRef = useRef({
+    onUpdateHUD,
+    onHudUpdate,
+    onLevelComplete,
+    onWin,
+    onPlayerDeath,
+    onDeath,
+    onQuickRestart,
+  });
+
+  callbacksRef.current = {
+    onUpdateHUD,
+    onHudUpdate,
+    onLevelComplete,
+    onWin,
+    onPlayerDeath,
+    onDeath,
+    onQuickRestart,
+  };
+
+  // Stable callback dispatchers
+  const triggerPlayerDeath = useCallback((levelId: number, deaths: number) => {
+    const cb = callbacksRef.current;
+    if (typeof cb.onPlayerDeath === 'function') cb.onPlayerDeath(levelId, deaths);
+    if (typeof cb.onDeath === 'function') cb.onDeath();
+  }, []);
+
+  const triggerHudUpdate = useCallback((player: GameEngineState['player'], time: number, deaths: number) => {
+    const cb = callbacksRef.current;
+    if (typeof cb.onUpdateHUD === 'function') cb.onUpdateHUD(player, time, deaths);
+    if (typeof cb.onHudUpdate === 'function') cb.onHudUpdate(player, time, deaths);
+  }, []);
+
+  const triggerLevelWin = useCallback((levelId: number, time: number, deaths: number) => {
+    const cb = callbacksRef.current;
+    if (typeof cb.onLevelComplete === 'function') cb.onLevelComplete(levelId, time, deaths);
+    if (typeof cb.onWin === 'function') cb.onWin(time, deaths);
+  }, []);
 
   // Game Engine State
   const gameStateRef = useRef<GameEngineState>(initLevelState(level));
@@ -59,11 +106,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const prevKeysRef = useRef<ControlKeys>({ ...keysRef.current });
 
   // Touch screen auto-detection
-  const [isTouchDevice, setIsTouchDevice] = useState<boolean>(false);
-
-  useEffect(() => {
-    setIsTouchDevice('ontouchstart' in window || navigator.maxTouchPoints > 0);
-  }, []);
+  const [isTouchDevice] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return 'ontouchstart' in window || (navigator.maxTouchPoints != null && navigator.maxTouchPoints > 0);
+  });
 
   const shouldShowTouch = 
     touchMode === 'always' || (touchMode === 'auto' && isTouchDevice);
@@ -75,20 +121,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     state.timerStarted = false;
     state.isCompleted = false;
     deathsCountRef.current += 1;
-    onPlayerDeath(state.level.id, deathsCountRef.current);
+    triggerPlayerDeath(state.level.id, deathsCountRef.current);
     respawnPlayer(state);
-    onUpdateHUD(state.player, 0, deathsCountRef.current);
+    triggerHudUpdate(state.player, 0, deathsCountRef.current);
     sounds.playDeath();
     haptics.medium();
-  }, [onPlayerDeath, onUpdateHUD]);
+  }, [triggerPlayerDeath, triggerHudUpdate]);
 
   // Re-initialize state when level changes
+  const prevLevelIdRef = useRef<number>(level.id);
   useEffect(() => {
+    prevLevelIdRef.current = level.id;
     gameStateRef.current = initLevelState(level);
     deathsCountRef.current = 0;
-    onPlayerDeath(level.id, 0);
-    onUpdateHUD(gameStateRef.current.player, 0, 0);
-  }, [level, onPlayerDeath, onUpdateHUD]);
+    triggerHudUpdate(gameStateRef.current.player, 0, 0);
+  }, [level.id, level, triggerHudUpdate]);
 
   // External restart trigger listener
   const prevRestartSignalRef = useRef<number>(restartSignal);
@@ -99,22 +146,67 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
   }, [restartSignal, handleRestart]);
 
+  // Focus helper
+  useEffect(() => {
+    if (canvasRef.current) {
+      canvasRef.current.focus();
+    }
+  }, [level.id]);
+
   // Keyboard Event Handlers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept typing in input fields
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+
+      const code = e.code;
+      const key = e.key ? e.key.toLowerCase() : '';
+
       // Prevent default page scroll on game keys
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyS', 'KeyA', 'KeyD', 'KeyX', 'KeyZ', 'KeyR'].includes(e.code)) {
+      if (
+        ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyS', 'KeyA', 'KeyD', 'KeyX', 'KeyZ', 'KeyC', 'KeyR', 'KeyJ', 'KeyK', 'ShiftLeft', 'ShiftRight'].includes(code) ||
+        [' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 's', 'a', 'd', 'x', 'z', 'c', 'r', 'j', 'k', 'shift', 'ц', 'ы', 'ф', 'в', 'ч', 'я', 'с', 'к', 'о', 'л'].includes(key)
+      ) {
         e.preventDefault();
       }
 
       const keys = keysRef.current;
-      if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = true;
-      if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = true;
-      if (e.code === 'ArrowUp' || e.code === 'KeyW') keys.up = true;
-      if (e.code === 'ArrowDown' || e.code === 'KeyS') keys.down = true;
-      if (e.code === 'Space' || e.code === 'KeyZ' || e.code === 'ArrowUp' || e.code === 'KeyW') keys.jump = true;
-      if (e.code === 'KeyX' || e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyK') keys.dash = true;
-      if (e.code === 'KeyR') {
+      
+      // LEFT
+      if (code === 'ArrowLeft' || code === 'KeyA' || key === 'arrowleft' || key === 'a' || key === 'ф') {
+        keys.left = true;
+      }
+      // RIGHT
+      if (code === 'ArrowRight' || code === 'KeyD' || key === 'arrowright' || key === 'd' || key === 'в') {
+        keys.right = true;
+      }
+      // UP
+      if (code === 'ArrowUp' || code === 'KeyW' || key === 'arrowup' || key === 'w' || key === 'ц') {
+        keys.up = true;
+      }
+      // DOWN
+      if (code === 'ArrowDown' || code === 'KeyS' || key === 'arrowdown' || key === 's' || key === 'ы') {
+        keys.down = true;
+      }
+      // JUMP
+      if (
+        code === 'Space' || code === 'KeyZ' || code === 'KeyC' || code === 'ArrowUp' || code === 'KeyW' ||
+        key === ' ' || key === 'space' || key === 'z' || key === 'c' || key === 'arrowup' || key === 'w' || key === 'я' || key === 'с' || key === 'ц'
+      ) {
+        keys.jump = true;
+      }
+      // DASH
+      if (
+        code === 'KeyX' || code === 'ShiftLeft' || code === 'ShiftRight' || code === 'KeyK' || code === 'KeyJ' ||
+        key === 'x' || key === 'shift' || key === 'k' || key === 'j' || key === 'ч' || key === 'л' || key === 'о'
+      ) {
+        keys.dash = true;
+      }
+      // RESTART
+      if (code === 'KeyR' || key === 'r' || key === 'к') {
         if (!keys.restart) {
           handleRestart();
         }
@@ -123,22 +215,72 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      const code = e.code;
+      const key = e.key ? e.key.toLowerCase() : '';
+
       const keys = keysRef.current;
-      if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = false;
-      if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
-      if (e.code === 'ArrowUp' || e.code === 'KeyW') keys.up = false;
-      if (e.code === 'ArrowDown' || e.code === 'KeyS') keys.down = false;
-      if (e.code === 'Space' || e.code === 'KeyZ' || e.code === 'ArrowUp' || e.code === 'KeyW') keys.jump = false;
-      if (e.code === 'KeyX' || e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyK') keys.dash = false;
-      if (e.code === 'KeyR') keys.restart = false;
+      
+      // LEFT
+      if (code === 'ArrowLeft' || code === 'KeyA' || key === 'arrowleft' || key === 'a' || key === 'ф') {
+        keys.left = false;
+      }
+      // RIGHT
+      if (code === 'ArrowRight' || code === 'KeyD' || key === 'arrowright' || key === 'd' || key === 'в') {
+        keys.right = false;
+      }
+      // UP
+      if (code === 'ArrowUp' || code === 'KeyW' || key === 'arrowup' || key === 'w' || key === 'ц') {
+        keys.up = false;
+      }
+      // DOWN
+      if (code === 'ArrowDown' || code === 'KeyS' || key === 'arrowdown' || key === 's' || key === 'ы') {
+        keys.down = false;
+      }
+      // JUMP
+      if (
+        code === 'Space' || code === 'KeyZ' || code === 'KeyC' || code === 'ArrowUp' || code === 'KeyW' ||
+        key === ' ' || key === 'space' || key === 'z' || key === 'c' || key === 'arrowup' || key === 'w' || key === 'я' || key === 'с' || key === 'ц'
+      ) {
+        keys.jump = false;
+      }
+      // DASH
+      if (
+        code === 'KeyX' || code === 'ShiftLeft' || code === 'ShiftRight' || code === 'KeyK' || code === 'KeyJ' ||
+        key === 'x' || key === 'shift' || key === 'k' || key === 'j' || key === 'ч' || key === 'л' || key === 'о'
+      ) {
+        keys.dash = false;
+      }
+      // RESTART
+      if (code === 'KeyR' || key === 'r' || key === 'к') {
+        keys.restart = false;
+      }
+    };
+
+    const resetKeys = () => {
+      const keys = keysRef.current;
+      keys.left = false;
+      keys.right = false;
+      keys.up = false;
+      keys.down = false;
+      keys.jump = false;
+      keys.dash = false;
+      keys.dashLeft = false;
+      keys.dashRight = false;
+      keys.dashUp = false;
+      keys.dashDown = false;
+      keys.restart = false;
     };
 
     window.addEventListener('keydown', handleKeyDown, { passive: false });
     window.addEventListener('keyup', handleKeyUp, { passive: false });
+    window.addEventListener('blur', resetKeys);
+    document.addEventListener('visibilitychange', resetKeys);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', resetKeys);
+      document.removeEventListener('visibilitychange', resetKeys);
     };
   }, [handleRestart]);
 
@@ -186,8 +328,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // On Death Callback
           () => {
             deathsCountRef.current += 1;
-            onPlayerDeath(state.level.id, deathsCountRef.current);
-            onUpdateHUD(state.player, state.levelTime, deathsCountRef.current);
+            triggerPlayerDeath(state.level.id, deathsCountRef.current);
+            triggerHudUpdate(state.player, state.levelTime, deathsCountRef.current);
             haptics.error();
             // PostMessage to parent
             if (typeof window !== 'undefined' && window.parent) {
@@ -201,8 +343,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           },
           // On Win Callback
           () => {
-            onLevelComplete(state.level.id, state.levelTime, deathsCountRef.current);
-            onUpdateHUD(state.player, state.levelTime, deathsCountRef.current);
+            triggerLevelWin(state.level.id, state.levelTime, deathsCountRef.current);
+            triggerHudUpdate(state.player, state.levelTime, deathsCountRef.current);
             haptics.success();
             // PostMessage to parent
             if (typeof window !== 'undefined' && window.parent) {
@@ -221,7 +363,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Throttle HUD state update to ~20 FPS
         hudThrottleCounter++;
         if (hudThrottleCounter % 3 === 0) {
-          onUpdateHUD(state.player, state.levelTime, deathsCountRef.current);
+          triggerHudUpdate(state.player, state.levelTime, deathsCountRef.current);
         }
       }
 
@@ -243,7 +385,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     animFrameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animFrameId);
-  }, [theme, scanlines, screenShakeEnabled, onLevelComplete, onPlayerDeath, onUpdateHUD]);
+  }, [theme, scanlines, screenShakeEnabled, triggerLevelWin, triggerPlayerDeath, triggerHudUpdate]);
 
   const levelCols = level.cols || 20;
   const levelRows = level.rows || 30;
@@ -252,27 +394,36 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     <div 
       ref={containerRef}
       id="game-viewport-container"
-      className="relative flex-1 w-full max-w-4xl mx-auto flex flex-col items-center justify-center overflow-hidden bg-zinc-950 px-0 sm:px-2 py-0 select-none gap-0.5 sm:gap-1"
+      className="relative flex-1 w-full h-full min-h-0 max-w-4xl mx-auto flex flex-col items-center justify-center overflow-hidden bg-zinc-950 px-1 py-0.5 select-none gap-0.5 outline-none"
+      tabIndex={0}
+      onClick={() => canvasRef.current?.focus()}
     >
-      {/* Canvas Frame stretching edge-to-edge horizontally on mobile */}
-      <div className="flex-1 w-full min-h-0 flex items-center justify-center overflow-hidden">
+      {/* Canvas Frame fitted accurately with zero aspect distortion */}
+      <div className="flex-1 w-full min-h-0 flex items-center justify-center overflow-hidden p-0.5 sm:p-1">
         <div 
           id="pixel-canvas-frame"
-          className="relative w-full max-w-full sm:max-w-[440px] flex items-center justify-center shadow-2xl overflow-hidden border-y sm:border border-zinc-800/80 sm:rounded-xl bg-black"
+          className="relative flex items-center justify-center shadow-2xl overflow-hidden border border-zinc-800/80 rounded-lg sm:rounded-xl bg-black"
           style={{
             aspectRatio: `${levelCols} / ${levelRows}`,
             maxHeight: '100%',
             maxWidth: '100%',
+            height: '100%',
+            width: 'auto',
             boxShadow: `0 0 30px ${theme.background}88, 0 12px 30px rgba(0,0,0,0.85)`,
           }}
         >
           <canvas
             ref={canvasRef}
             id="main-pixel-canvas"
+            tabIndex={0}
             width={levelCols * TILE_SIZE}
             height={levelRows * TILE_SIZE}
-            className="w-full h-full block object-contain"
-            style={{ imageRendering: 'pixelated' }}
+            className="w-full h-full block cursor-default outline-none"
+            style={{ 
+              imageRendering: 'pixelated',
+              width: '100%',
+              height: '100%',
+            }}
           />
 
           {/* Pause Overlay */}
@@ -287,7 +438,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       {/* Touch Controls for mobile view - positioned snugly right beneath the game field */}
       {shouldShowTouch && (
-        <div className="w-full max-w-lg shrink-0 pt-0 pb-1 px-1">
+        <div className="w-full max-w-lg shrink-0 pt-0 pb-0.5 px-1">
           <TouchControls 
             onKeyChange={handleTouchKey} 
             onQuickRestart={handleRestart}
@@ -297,3 +448,5 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     </div>
   );
 };
+
+export const GameCanvas = React.memo(GameCanvasComponent);

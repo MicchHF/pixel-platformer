@@ -265,6 +265,60 @@ class SoundManager {
     } catch {}
   }
 
+  // Dash attack on enemy: heavy punch impact + electric knockback whoosh
+  public playEnemyHit() {
+    if (this.isMuted || this.sfxVolume <= 0) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    try {
+      const now = this.ctx.currentTime;
+
+      // Heavy punch impact
+      const punchOsc = this.ctx.createOscillator();
+      const punchGain = this.ctx.createGain();
+      punchOsc.type = 'triangle';
+      punchOsc.frequency.setValueAtTime(280, now);
+      punchOsc.frequency.exponentialRampToValueAtTime(40, now + 0.14);
+      punchGain.gain.setValueAtTime(this.sfxVolume * 0.55, now);
+      punchGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+      punchOsc.connect(punchGain);
+      punchGain.connect(this.ctx.destination);
+      punchOsc.start(now);
+      punchOsc.stop(now + 0.14);
+
+      // Sci-fi deflection / parry ping
+      const pingOsc = this.ctx.createOscillator();
+      const pingGain = this.ctx.createGain();
+      pingOsc.type = 'sine';
+      pingOsc.frequency.setValueAtTime(880, now);
+      pingOsc.frequency.exponentialRampToValueAtTime(1760, now + 0.08);
+      pingGain.gain.setValueAtTime(this.sfxVolume * 0.35, now);
+      pingGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+      pingOsc.connect(pingGain);
+      pingGain.connect(this.ctx.destination);
+      pingOsc.start(now);
+      pingOsc.stop(now + 0.08);
+
+      // White noise whip crack
+      const bufferSize = Math.floor(this.ctx.sampleRate * 0.1);
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * 0.02));
+      }
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+      const noiseGain = this.ctx.createGain();
+      noiseGain.gain.setValueAtTime(this.sfxVolume * 0.4, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      noise.connect(noiseGain);
+      noiseGain.connect(this.ctx.destination);
+      noise.start(now);
+      noise.stop(now + 0.1);
+    } catch {}
+  }
+
   // Key Pickup: bright triumphant 2-note chime
   public playKeyPickup() {
     if (this.isMuted || this.sfxVolume <= 0) return;
